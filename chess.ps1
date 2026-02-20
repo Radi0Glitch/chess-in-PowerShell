@@ -1,3 +1,4 @@
+[Console]::OutputEncoding = [System.Text.Encoding]::Unicode
 [Console]::TreatControlCAsInput = $true
 
 $Grid = @()
@@ -33,7 +34,7 @@ function Get-Symbol($piece) {
     if (!$piece) { return ' ' }
     $s = @{
         'White' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }
-        'Black' = @{ King='k'; Queen='q'; Rook='r'; Bishop='b'; Knight='n'; Pawn='p' }
+        'Black' = @{ King="K"; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }
     }
     return $s[$piece.Color][$piece.Type]
 }
@@ -176,10 +177,18 @@ function Do-Move($x1, $y1, $x2, $y2) {
 function Draw-Board {
     Clear-Host
     $cols = @('A','B','C','D','E','F','G','H')
-    Write-Host ("    " + ($cols -join ' '))
-    for ($y = 0; $y -lt 8; $y++) {
-        Write-Host ("$(8-$y)  +" + ("---+" * 8))
-        Write-Host -NoNewline "   |"
+    Write-Host ("    " + ($cols -join '   '))
+           for ($y = 0; $y -lt 8; $y++) {
+            # Рамки (без лишних пробелов)
+            if ($y -eq 0) {
+                Write-Host ("$(8-$y) ╔" + ("═══╦" * 7) + "═══╗")
+            }
+            
+            else {
+                Write-Host ("$(8-$y) ╠" + ("═══╬" * 7) + "═══╣")
+            }
+
+            Write-Host -NoNewline "  ║"
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:Grid[$y][$x]
             $s = Get-Symbol $p
@@ -195,12 +204,12 @@ function Draw-Board {
             if ($x -eq $script:SelX -and $y -eq $script:SelY) { $bg = 'Blue'; $fg = 'Yellow' }
             
             Write-Host " $s " -NoNewline -ForegroundColor $fg -BackgroundColor $bg
-            Write-Host -NoNewline "|"
+            Write-Host -NoNewline "║"
         }
         Write-Host
     }
-    Write-Host ("   +" + ("---+" * 8))
-    Write-Host ("    " + ($cols -join ' '))
+     Write-Host ("  ╚" + ("═══╩" * 7) + "═══╝")
+    Write-Host ("    " + ($cols -join '   '))
     Write-Host $script:Status -ForegroundColor Yellow
     Write-Host "Cursor: $script:SelX,$script:SelY | Moves: $($script:ValidMoves.Count)"
     Write-Host "Arrows: Move | Enter: Select/Move | Esc: Exit"

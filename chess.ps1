@@ -39,7 +39,6 @@ function Init-Grid {
 
 function Get-Symbol($piece) {
     if (!$piece) { return ' ' }
-    # Математические жирные буквы (U+1D40A – U+1D419 для заглавных)
     $s = @{
         'White' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }
         'Black' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }

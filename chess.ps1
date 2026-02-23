@@ -50,43 +50,69 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
     $p = $script:Grid[$y1][$x1]
     $target = $script:Grid[$y2][$x2]
     if (!$p) { return $false }
-    if ($p.Color -ne $script:Turn) { return $false }
+    # Проверка цвета: при ignoreCheck=$true разрешаем любую фигуру (для определения шаха)
+    if (!$ignoreCheck -and $p.Color -ne $script:Turn) { return $false }
     if ($target -and $target.Color -eq $p.Color) { return $false }
-    
-    $dx = [Math]::Abs($x2 - $x1)
-    $dy = [Math]::Abs($y2 - $y1)
+    if ($x1 -eq $x2 -and $y1 -eq $y2) { return $false }
+
+    $dx = $x2 - $x1
+    $dy = $y2 - $y1
+    $absDx = [Math]::Abs($dx)
+    $absDy = [Math]::Abs($dy)
     $dir = if ($p.Color -eq 'White') { -1 } else { 1 }
-    
-    # Пешка
-    if ($p.Type -eq 'Pawn') {
-        if ($x1 -eq $x2 -and !$target) {
-            if ($y2 -eq $y1 + $dir) { return $true }
-            if (($y1 -eq 1 -or $y1 -eq 6) -and $y2 -eq $y1 + 2 * $dir) {
-                if (!$script:Grid[$y1 + $dir][$x1]) { return $true }
-            }
-        }
-        if ($dx -eq 1 -and $y2 -eq $y1 + $dir -and $target) { return $true }
-        return $false
-    }
-    
-    # Проверка геометрии хода
-    $geometryOk = $false
+
     switch ($p.Type) {
-        'Knight' { if ($dx * $dy -eq 2) { $geometryOk = $true } }
-        'King'   { if ($dx -le 1 -and $dy -le 1) { $geometryOk = $true } }
-        'Rook'   { if ($dx -eq 0 -or $dy -eq 0) { $geometryOk = $true } }
-        'Bishop' { if ($dx -eq $dy) { $geometryOk = $true } }
-        'Queen'  { if ($dx -eq $dy -or $dx -eq 0 -or $dy -eq 0) { $geometryOk = $true } }
+        'Pawn' {
+            if ($dx -eq 0) {
+                if ($dy -eq $dir -and !$target) { return $true }
+                if (($y1 -eq 1 -or $y1 -eq 6) -and $dy -eq 2 * $dir -and !$target) {
+                    $midY = $y1 + $dir
+                    if (!$script:Grid[$midY][$x1]) { return $true }
+                }
+            }
+            if ($absDx -eq 1 -and $dy -eq $dir -and $target) { return $true }
+            return $false
+        }
+        'Knight' {
+            if ($absDx * $absDy -eq 2) {
+                if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'King' {
+            if ($absDx -le 1 -and $absDy -le 1) {
+                if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Rook' {
+            if ($dx -eq 0 -or $dy -eq 0) {
+                if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+                if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Bishop' {
+            if ($absDx -eq $absDy) {
+                if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+                if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Queen' {
+            if ($absDx -eq $absDy -or $dx -eq 0 -or $dy -eq 0) {
+                if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+                if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        default { return $false }
     }
-    if (!$geometryOk) { return $false }
-    
-    # Проверка чистоты пути (кроме коня и короля)
-    if ($p.Type -ne 'Knight' -and $p.Type -ne 'King') {
-        if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
-    }
-    
-    if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
-    return $true
 }
 
 function Test-PathClear($x1, $y1, $x2, $y2) {

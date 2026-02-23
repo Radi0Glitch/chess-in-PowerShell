@@ -1,4 +1,11 @@
-[Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+# Попытка переключить кодовую страницу на UTF-8 (если не ISE)
+if ($host.Name -notlike '*ISE*') {
+    try { chcp 65001 | Out-Null } catch {}
+}
+
 [Console]::TreatControlCAsInput = $true
 
 $Grid = @()
@@ -32,9 +39,10 @@ function Init-Grid {
 
 function Get-Symbol($piece) {
     if (!$piece) { return ' ' }
+    # Математические жирные буквы (U+1D40A – U+1D419 для заглавных)
     $s = @{
         'White' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }
-        'Black' = @{ King="K"; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }
+        'Black' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='N'; Pawn='P' }
     }
     return $s[$piece.Color][$piece.Type]
 }
@@ -50,6 +58,7 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
     $dy = [Math]::Abs($y2 - $y1)
     $dir = if ($p.Color -eq 'White') { -1 } else { 1 }
     
+    # Пешка
     if ($p.Type -eq 'Pawn') {
         if ($x1 -eq $x2 -and !$target) {
             if ($y2 -eq $y1 + $dir) { return $true }
@@ -60,13 +69,23 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
         if ($dx -eq 1 -and $y2 -eq $y1 + $dir -and $target) { return $true }
         return $false
     }
-    if ($p.Type -eq 'Knight' -and $dx * $dy -ne 2) { return $false }
-    if ($p.Type -eq 'King' -and ($dx -gt 1 -or $dy -gt 1)) { return $false }
-    if ($p.Type -eq 'Rook' -and $dx -ne 0 -and $dy -ne 0) { return $false }
-    if ($p.Type -eq 'Bishop' -and $dx -ne $dy) { return $false }
-    if ($p.Type -eq 'Queen' -and $dx -ne $dy -and $dx -ne 0 -and $dy -ne 0) { return $false }
     
-    if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+    # Проверка геометрии хода
+    $geometryOk = $false
+    switch ($p.Type) {
+        'Knight' { if ($dx * $dy -eq 2) { $geometryOk = $true } }
+        'King'   { if ($dx -le 1 -and $dy -le 1) { $geometryOk = $true } }
+        'Rook'   { if ($dx -eq 0 -or $dy -eq 0) { $geometryOk = $true } }
+        'Bishop' { if ($dx -eq $dy) { $geometryOk = $true } }
+        'Queen'  { if ($dx -eq $dy -or $dx -eq 0 -or $dy -eq 0) { $geometryOk = $true } }
+    }
+    if (!$geometryOk) { return $false }
+    
+    # Проверка чистоты пути (кроме коня и короля)
+    if ($p.Type -ne 'Knight' -and $p.Type -ne 'King') {
+        if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+    }
+    
     if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
     return $true
 }
@@ -154,12 +173,41 @@ function Test-HasAnyValidMoves($color) {
     return $false
 }
 
+function Convert-Pawn($x, $y) {
+    $pawn = $script:Grid[$y][$x]
+    $color = $pawn.Color
+    $prompt = "Pawn promotion: (Q)ueen, (R)ook, (B)ishop, (K)night: "
+    while ($true) {
+        Write-Host $prompt -NoNewline -ForegroundColor Cyan
+        $key = $host.UI.RawUI.ReadKey("IncludeKeyDown").Character
+        Write-Host $key
+        $choice = switch ($key) {
+            'Q' { 'Queen' }
+            'R' { 'Rook' }
+            'B' { 'Bishop' }
+            'K' { 'Knight' }
+            default { $null }
+        }
+        if ($choice) {
+            $script:Grid[$y][$x] = @{ Type=$choice; Color=$color; X=$x; Y=$y }
+            break
+        }
+    }
+}
+
 function Do-Move($x1, $y1, $x2, $y2) {
     if (!(Test-ValidMove $x1 $y1 $x2 $y2 $false)) { return $false }
+    
     $script:Grid[$y2][$x2] = $script:Grid[$y1][$x1]
     $script:Grid[$y1][$x1] = $null
     $script:Grid[$y2][$x2].X = $x2
     $script:Grid[$y2][$x2].Y = $y2
+    
+    # Превращение пешки
+    if ($script:Grid[$y2][$x2].Type -eq 'Pawn' -and ($y2 -eq 0 -or $y2 -eq 7)) {
+        Convert-Pawn $x2 $y2
+    }
+    
     $script:Turn = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }
     
     $check = Test-KingInCheck $script:Turn
@@ -178,17 +226,15 @@ function Draw-Board {
     Clear-Host
     $cols = @('A','B','C','D','E','F','G','H')
     Write-Host ("    " + ($cols -join '   '))
-           for ($y = 0; $y -lt 8; $y++) {
-            # Рамки (без лишних пробелов)
-            if ($y -eq 0) {
-                Write-Host ("$(8-$y) ╔" + ("═══╦" * 7) + "═══╗")
-            }
-            
-            else {
-                Write-Host ("$(8-$y) ╠" + ("═══╬" * 7) + "═══╣")
-            }
+    for ($y = 0; $y -lt 8; $y++) {
+        # Верхняя граница доски и разделители между рядами
+        if ($y -eq 0) {
+            Write-Host ("$(8-$y) ╔" + ("═══╦" * 7) + "═══╗")
+        } else {
+            Write-Host ("$(8-$y) ╠" + ("═══╬" * 7) + "═══╣")
+        }
 
-            Write-Host -NoNewline "  ║"
+        Write-Host -NoNewline "  ║"
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:Grid[$y][$x]
             $s = Get-Symbol $p
@@ -196,10 +242,7 @@ function Draw-Board {
             $fg = if ($p -and $p.Color -eq 'White') { 'White' } else { 'Red' }
             
             if ($p -and $p.Type -eq 'King' -and (Test-KingInCheck $p.Color)) { $bg = 'Red'; $fg = 'White' }
-            
-            # Проверка через -contains (работает с массивом)
             if ($script:ValidMoves -contains "$x,$y") { $bg = 'Green' }
-            
             if ($script:HasSelection -and $x -eq $script:StartX -and $y -eq $script:StartY) { $bg = 'Cyan'; $fg = 'Black' }
             if ($x -eq $script:SelX -and $y -eq $script:SelY) { $bg = 'Blue'; $fg = 'Yellow' }
             
@@ -208,7 +251,7 @@ function Draw-Board {
         }
         Write-Host
     }
-     Write-Host ("  ╚" + ("═══╩" * 7) + "═══╝")
+    Write-Host ("  ╚" + ("═══╩" * 7) + "═══╝")
     Write-Host ("    " + ($cols -join '   '))
     Write-Host $script:Status -ForegroundColor Yellow
     Write-Host "Cursor: $script:SelX,$script:SelY | Moves: $($script:ValidMoves.Count)"

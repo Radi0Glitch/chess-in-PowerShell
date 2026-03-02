@@ -1,35 +1,41 @@
 # ============================================================================
-# БЛОК 1: НАСТРОЙКА ОКРУЖЕНИЯ И КОДИРОВКИ
+# ШАХМАТЫ В POWERSHELL — ФИНАЛЬНАЯ ВЕРСИЯ С ИИ
 # ============================================================================
-# Настройка UTF-8 для корректного отображения символов в консоли
+# Исправления:
+#   #1 - Виртуальная доска для ИИ (не повреждает реальную игру)
+#   #2 - Test-ValidMove: проверка King только когда !$ignoreCheck
+#   #3 - Test-ValidMove: Test-LeavesKingInCheck для ВСЕХ фигур
+#   #4 - AlphaBeta: явные   везде
+#   #5 - Get-Symbol/Draw-Board: защита от NULL фигур
+# ============================================================================
+
+# ============================================================================
+# БЛОК 1: НАСТРОЙКА ОКРУЖЕНИЯ
+# ============================================================================
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Установка codepage 65001 (UTF-8) для PowerShell (кроме ISE)
 if ($host.Name -notlike '*ISE*') {
     try { chcp 65001 | Out-Null } catch {}
 }
 
-# Обработка Ctrl+C как обычного ввода для возможности выхода по Esc
 [Console]::TreatControlCAsInput = $true
 
-
 # ============================================================================
-# БЛОК 2: ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ИГРЫ
+# БЛОК 2: ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 # ============================================================================
 
-# --- Состояние игрового поля и курсора ---
-$script:Grid = @()              # Двумерный массив 8x8 для хранения фигур
-$script:SelX = 0                # Координата X курсора на доске
-$script:SelY = 0                # Координата Y курсора на доске
-$script:HasSelection = $false   # Флаг: выбрана ли фигура для хода
-$script:StartX = 0              # Координата X выбранной фигуры
-$script:StartY = 0              # Координата Y выбранной фигуры
-$script:Turn = 'White'          # Чей сейчас ход: 'White' или 'Black'
-$script:ValidMoves = @()        # Список допустимых ходов для выбранной фигуры ("x,y")
-$script:Status = ''             # Текстовый статус игры (шах, мат, ничья и т.д.)
+$script:Grid = @()
+$script:SelX = 0
+$script:SelY = 0
+$script:HasSelection = $false
+$script:StartX = 4
+$script:StartY = 4
+$script:Turn = 'White'
+$script:ValidMoves = @()
+$script:Status = ''
 
-# --- Флаги рокировки (отслеживание ходов короля и ладей) ---
+# Рокировка
 $script:WhiteKingMoved = $false
 $script:BlackKingMoved = $false
 $script:WhiteRookKingsideMoved = $false
@@ -37,37 +43,60 @@ $script:WhiteRookQueensideMoved = $false
 $script:BlackRookKingsideMoved = $false
 $script:BlackRookQueensideMoved = $false
 
-# --- Счётчики для правил ничьей ---
-$script:HalfMoveClock = 0       # Ходы без взятий и ходов пешками (правило 50 ходов)
-$script:PositionHistory = @()   # История позиций для правила трёхкратного повтора
-$script:TotalMoves = 0          # Общее количество сделанных ходов
+# Ничья
+$script:HalfMoveClock = 0
+$script:PositionHistory = @()
+$script:TotalMoves = 0
 
-# --- Сетевые переменные (LAN-режим) ---
-$script:NetworkMode = $false    # Активна ли сетевая игра
-$script:IsServer = $false       # Текущий игрок — сервер?
-$script:IsClient = $false       # Текущий игрок — клиент?
-$script:TcpListener = $null     # Listener для сервера
-$script:TcpClient = $null       # TCP-клиент для соединения
-$script:NetworkStream = $null   # Поток данных для сетевого обмена
-$script:LocalColor = $null      # Цвет фигур локального игрока
-$script:RemoteColor = $null     # Цвет фигур удалённого игрока
-$script:LastPromotion = $null   # Тип фигуры для последнего превращения пешки
+# Сеть
+$script:NetworkMode = $false
+$script:IsServer = $false
+$script:IsClient = $false
+$script:TcpListener = $null
+$script:TcpClient = $null
+$script:NetworkStream = $null
+$script:LocalColor = $null
+$script:RemoteColor = $null
+$script:LastPromotion = $null
 
-# --- Переменные режимов игры ---
-$script:GameMode = ''           # Выбранный режим: 'TwoPlayer', 'VsAI', 'LAN'
-$script:PlayerColor = ''        # Цвет игрока в режиме VsAI
-$script:ComputerColor = ''      # Цвет компьютера в режиме VsAI
+# Режимы
+$script:GameMode = ''
+$script:PlayerColor = ''
+$script:ComputerColor = ''
 
+# Для ИИ (виртуальная доска)
+$script:AIGrid = @()
+$script:AITurn = ''
+$script:AILastMove = $null
+
+# Таблицы позиций
+$script:PawnTable = @(
+    0,  0,  0,  0,  0,  0,  0,  0,
+    50, 50, 50, 50, 50, 50, 50, 50,
+    10, 10, 20, 30, 30, 20, 10, 10,
+    5,  5, 10, 25, 25, 10,  5,  5,
+    0,  0,  0, 20, 20,  0,  0,  0,
+    5, -5,-10,  0,  0,-10, -5,  5,
+    5, 10, 10,-20,-20, 10, 10,  5,
+    0,  0,  0,  0,  0,  0,  0,  0
+)
+
+$script:KnightTable = @(
+    -50,-40,-30,-30,-30,-30,-40,-50,
+    -40,-20,  0,  0,  0,  0,-20,-40,
+    -30,  0, 10, 15, 15, 10,  0,-30,
+    -30,  5, 15, 20, 20, 15,  5,-30,
+    -30,  0, 15, 20, 20, 15,  0,-30,
+    -30,  5, 10, 15, 15, 10,  5,-30,
+    -40,-20,  0,  5,  5,  0,-20,-40,
+    -50,-40,-30,-30,-30,-30,-40,-50
+)
 
 # ============================================================================
-# БЛОК 3: ИНИЦИАЛИЗАЦИЯ ИГРЫ
+# БЛОК 3: ИНИЦИАЛИЗАЦИЯ
 # ============================================================================
 
-# Функция: Init-Grid
-# Назначение: Создание пустой доски и расстановка фигур в начальную позицию
-# Сбрасывает все флаги рокировки и счётчики ничьей
 function Init-Grid {
-    # Создаём пустую доску 8x8
     $script:Grid = @()
     for ($y = 0; $y -lt 8; $y++) {
         $row = @()
@@ -75,84 +104,67 @@ function Init-Grid {
         $script:Grid += ,$row
     }
     
-    # Расстановка фигур: массив названий для линейных фигур
     $major = 'Rook','Knight','Bishop','Queen','King','Bishop','Knight','Rook'
     for ($i = 0; $i -lt 8; $i++) {
-        # Чёрные фигуры (ряды 0 и 1)
         $script:Grid[0][$i] = @{ Type=$major[$i]; Color='Black'; X=$i; Y=0 }
         $script:Grid[1][$i] = @{ Type='Pawn'; Color='Black'; X=$i; Y=1 }
-        # Белые фигуры (ряды 6 и 7)
         $script:Grid[6][$i] = @{ Type='Pawn'; Color='White'; X=$i; Y=6 }
         $script:Grid[7][$i] = @{ Type=$major[$i]; Color='White'; X=$i; Y=7 }
     }
     
-    # Сброс флагов рокировки
     $script:WhiteKingMoved = $false; $script:BlackKingMoved = $false
     $script:WhiteRookKingsideMoved = $false; $script:WhiteRookQueensideMoved = $false
     $script:BlackRookKingsideMoved = $false; $script:BlackRookQueensideMoved = $false
-    
-    # Сброс счётчиков для правил ничьей
     $script:HalfMoveClock = 0
     $script:PositionHistory = @()
     $script:TotalMoves = 0
+    $script:HasSelection = $false
+    $script:ValidMoves = @()
 }
 
-
-# ============================================================================
-# БЛОК 4: ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ОТОБРАЖЕНИЯ
-# ============================================================================
-
-# Функция: Get-Symbol
-# Назначение: Возвращает буквенное обозначение фигуры для отображения на доске
 function Get-Symbol($piece) {
     if (!$piece) { return ' ' }
-    $s = @{
+    if (!$piece.Color -or !$piece.Type) { return '?' }
+    
+    $symbols = @{
         'White' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='H'; Pawn='P' }
         'Black' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='H'; Pawn='P' }
     }
-    return $s[$piece.Color][$piece.Type]
+    
+    if ($symbols.ContainsKey($piece.Color) -and $symbols[$piece.Color].ContainsKey($piece.Type)) {
+        return $symbols[$piece.Color][$piece.Type]
+    }
+    return '?'
 }
 
-
 # ============================================================================
-# БЛОК 5: ПРОВЕРКА ДОПУСТИМОСТИ ХОДОВ (ОСНОВНАЯ ЛОГИКА) — ИСПРАВЛЕНО
+# БЛОК 4: ПРОВЕРКА ХОДОВ (РЕАЛЬНАЯ ДОСКА)
 # ============================================================================
 
-# Функция: Test-ValidMove
-# Назначение: Проверяет, является ли ход (x1,y1) -> (x2,y2) легальным по правилам шахмат
-# Параметры:
-#   $ignoreCheck — если $true, не проверяет, остаётся ли король под шахом после хода
-#                  (используется при проверке атак на короля)
-# Возвращает: $true если ход допустим, $false иначе
 function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
+    if ($x1 -lt 0 -or $x1 -gt 7 -or $y1 -lt 0 -or $y1 -gt 7) { return $false }
+    if ($x2 -lt 0 -or $x2 -gt 7 -or $y2 -lt 0 -or $y2 -gt 7) { return $false }
+    
     $p = $script:Grid[$y1][$x1]
     $target = $script:Grid[$y2][$x2]
     
-    # Базовые проверки: есть ли фигура, свой ли ход, не бьём ли свою, не на месте ли стоим
-    if (!$p) { return $false }
+    if (!$p -or !$p.Type -or !$p.Color) { return $false }
     if (!$ignoreCheck -and $p.Color -ne $script:Turn) { return $false }
     if ($target -and $target.Color -eq $p.Color) { return $false }
     if ($x1 -eq $x2 -and $y1 -eq $y2) { return $false }
-    
-    # === FIX #1: Нельзя брать короля (ТОЛЬКО в обычном режиме, не при проверке шаха!) ===
-    # Без !$ignoreCheck функция Test-KingInCheck не могла определить атаку на короля
     if ($target -and $target.Type -eq 'King' -and !$ignoreCheck) { return $false }
 
     $dx = $x2 - $x1; $dy = $y2 - $y1
     $absDx = [Math]::Abs($dx); $absDy = [Math]::Abs($dy)
-    $dir = if ($p.Color -eq 'White') { -1 } else { 1 }  # Направление движения пешек
+    $dir = if ($p.Color -eq 'White') { -1 } else { 1 }
 
     switch ($p.Type) {
         'Pawn' {
-            # === FIX #2: Добавлена проверка Test-LeavesKingInCheck для всех ходов пешки ===
-            # Раньше пешка могла делать ходы, оставляющие короля под шахом
             if ($dx -eq 0) {
-                # Ход вперёд на 1 клетку без взятия
                 if ($dy -eq $dir -and !$target) {
                     if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
                     return $true
                 }
-                # Первый ход пешки: прыжок на 2 клетки, если путь свободен
                 if (($y1 -eq 1 -or $y1 -eq 6) -and $dy -eq 2 * $dir -and !$target) {
                     $midY = $y1 + $dir
                     if (!$script:Grid[$midY][$x1]) {
@@ -161,7 +173,6 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
                     }
                 }
             }
-            # Взятие по диагонали: только если есть цель
             if ($absDx -eq 1 -and $dy -eq $dir -and $target) {
                 if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
                 return $true
@@ -169,7 +180,6 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
             return $false
         }
         'Knight' {
-            # Ход конём: L-образный (2+1 или 1+2)
             if ($absDx * $absDy -eq 2) {
                 if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
                 return $true
@@ -177,32 +187,28 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
             return $false
         }
         'King' {
-            # FIX #3: Запрет на приближение королей ближе чем на 1 клетку
-            for ($y = 0; $y -lt 8; $y++) {
-                for ($x = 0; $x -lt 8; $x++) {
-                    $kp = $script:Grid[$y][$x]
+            for ($ky = 0; $ky -lt 8; $ky++) {
+                for ($kx = 0; $kx -lt 8; $kx++) {
+                    $kp = $script:Grid[$ky][$kx]
                     if ($kp -and $kp.Type -eq 'King' -and $kp.Color -ne $p.Color) {
-                        if ([Math]::Abs($x - $x2) -le 1 -and [Math]::Abs($y - $y2) -le 1) { 
+                        if ([Math]::Abs($kx - $x2) -le 1 -and [Math]::Abs($ky - $y2) -le 1) { 
                             return $false 
                         }
                     }
                 }
             }
             
-            # Обычный ход короля на 1 клетку в любом направлении
             if ($absDx -le 1 -and $absDy -le 1) {
                 if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
                 return $true
             }
             
-            # Рокировка: король двигается на 2 клетки по горизонтали
             if (!$ignoreCheck -and $dy -eq 0 -and $absDx -eq 2) {
                 return Test-CanCastle $x1 $y1 $x2 $y2
             }
             return $false
         }
         'Rook' {
-            # Ладья: только по прямым линиям
             if ($dx -eq 0 -or $dy -eq 0) {
                 if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
                 if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
@@ -211,7 +217,6 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
             return $false
         }
         'Bishop' {
-            # Слон: только по диагоналям
             if ($absDx -eq $absDy) {
                 if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
                 if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
@@ -220,7 +225,6 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
             return $false
         }
         'Queen' {
-            # Ферзь: комбинация ладьи и слона
             if ($absDx -eq $absDy -or $dx -eq 0 -or $dy -eq 0) {
                 if (!(Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
                 if (!$ignoreCheck -and (Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
@@ -232,77 +236,54 @@ function Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
     }
 }
 
-
-# ============================================================================
-# БЛОК 6: СПЕЦИАЛЬНЫЕ ХОДЫ — РОКИРОВКА
-# ============================================================================
-
-# Функция: Test-CanCastle
-# Назначение: Проверяет все условия для выполнения рокировки
-# Возвращает: $true если рокировка разрешена, $false иначе
 function Test-CanCastle($x1, $y1, $x2, $y2) {
     $piece = $script:Grid[$y1][$x1]
-    if ($piece.Type -ne 'King') { return $false }
+    if (!$piece -or $piece.Type -ne 'King') { return $false }
     
-    # Проверка: король уже ходил?
     if ($piece.Color -eq 'White' -and $script:WhiteKingMoved) { return $false }
     if ($piece.Color -eq 'Black' -and $script:BlackKingMoved) { return $false }
-    
-    # Проверка: король сейчас под шахом? (рокировка из-под шаха запрещена)
     if (Test-KingInCheck $piece.Color) { return $false }
     
-    $isKingside = $x2 -gt $x1  # Короткая (королевский фланг) или длинная (ферзевый)
+    $isKingside = $x2 -gt $x1
     
     if ($piece.Color -eq 'White') {
         if ($isKingside) {
-            # Белые, короткая рокировка: e1->g1, ладья h1->f1
             if ($script:WhiteRookKingsideMoved) { return $false }
-            if ($script:Grid[7][7] -eq $null -or $script:Grid[7][7].Type -ne 'Rook') { return $false }
-            # Клетки f1, g1 должны быть свободны
-            if ($script:Grid[7][5] -ne $null -or $script:Grid[7][6] -ne $null) { return $false }
-            # Король не должен проходить через битое поле
+            $rook = $script:Grid[7][7]
+            if (!$rook -or $rook.Type -ne 'Rook') { return $false }
+            if ($script:Grid[7][5] -or $script:Grid[7][6]) { return $false }
             if (Test-SquareAttacked 7 5 'White' -or Test-SquareAttacked 7 6 'White') { return $false }
         } else {
-            # Белые, длинная рокировка: e1->c1, ладья a1->d1
             if ($script:WhiteRookQueensideMoved) { return $false }
-            if ($script:Grid[7][0] -eq $null -or $script:Grid[7][0].Type -ne 'Rook') { return $false }
-            # Клетки b1, c1, d1 должны быть свободны
-            if ($script:Grid[7][1] -ne $null -or $script:Grid[7][2] -ne $null -or $script:Grid[7][3] -ne $null) { return $false }
-            # Проверка полей c1 и d1 на атаку
+            $rook = $script:Grid[7][0]
+            if (!$rook -or $rook.Type -ne 'Rook') { return $false }
+            if ($script:Grid[7][1] -or $script:Grid[7][2] -or $script:Grid[7][3]) { return $false }
             if (Test-SquareAttacked 7 2 'White' -or Test-SquareAttacked 7 3 'White') { return $false }
         }
     } else {
-        # Аналогичные проверки для чёрных
         if ($isKingside) {
             if ($script:BlackRookKingsideMoved) { return $false }
-            if ($script:Grid[0][7] -eq $null -or $script:Grid[0][7].Type -ne 'Rook') { return $false }
-            if ($script:Grid[0][5] -ne $null -or $script:Grid[0][6] -ne $null) { return $false }
+            $rook = $script:Grid[0][7]
+            if (!$rook -or $rook.Type -ne 'Rook') { return $false }
+            if ($script:Grid[0][5] -or $script:Grid[0][6]) { return $false }
             if (Test-SquareAttacked 0 5 'Black' -or Test-SquareAttacked 0 6 'Black') { return $false }
         } else {
             if ($script:BlackRookQueensideMoved) { return $false }
-            if ($script:Grid[0][0] -eq $null -or $script:Grid[0][0].Type -ne 'Rook') { return $false }
-            if ($script:Grid[0][1] -ne $null -or $script:Grid[0][2] -ne $null -or $script:Grid[0][3] -ne $null) { return $false }
+            $rook = $script:Grid[0][0]
+            if (!$rook -or $rook.Type -ne 'Rook') { return $false }
+            if ($script:Grid[0][1] -or $script:Grid[0][2] -or $script:Grid[0][3]) { return $false }
             if (Test-SquareAttacked 0 2 'Black' -or Test-SquareAttacked 0 3 'Black') { return $false }
         }
     }
     return $true
 }
 
-
-# ============================================================================
-# БЛОК 7: ПРОВЕРКА АТАК И ШАХОВ
-# ============================================================================
-
-# Функция: Test-SquareAttacked
-# Назначение: Проверяет, атакуется ли клетка (x,y) фигурами противника цвета $color
-# Используется для проверки шаха и валидации рокировки
 function Test-SquareAttacked($x, $y, $color) {
     $enemy = if ($color -eq 'White') { 'Black' } else { 'White' }
     for ($ty = 0; $ty -lt 8; $ty++) {
         for ($tx = 0; $tx -lt 8; $tx++) {
             $p = $script:Grid[$ty][$tx]
             if ($p -and $p.Color -eq $enemy) {
-                # Проверяем, может ли вражеская фигура бить эту клетку (без проверки на шах)
                 if (Test-ValidMove $tx $ty $x $y $true) { return $true }
             }
         }
@@ -310,40 +291,29 @@ function Test-SquareAttacked($x, $y, $color) {
     return $false
 }
 
-# Функция: Test-PathClear
-# Назначение: Проверяет, свободен ли путь между двумя клетками для линейных фигур
-# Возвращает: $true если путь чист, $false если есть препятствия
 function Test-PathClear($x1, $y1, $x2, $y2) {
     $stepX = [Math]::Sign($x2 - $x1)
     $stepY = [Math]::Sign($y2 - $y1)
     $x = $x1 + $stepX; $y = $y1 + $stepY
     while ($x -ne $x2 -or $y -ne $y2) {
-        if ($script:Grid[$y][$x]) { return $false }  # На пути есть фигура
+        if ($script:Grid[$y][$x]) { return $false }
         $x += $stepX; $y += $stepY
     }
     return $true
 }
 
-# Функция: Test-LeavesKingInCheck
-# Назначение: Симулирует ход и проверяет, остаётся ли король под шахом после него
-# Используется для фильтрации нелегальных ходов, оставляющих короля в опасности
 function Test-LeavesKingInCheck($x1, $y1, $x2, $y2) {
     $saved = $script:Grid[$y2][$x2]
     $piece = $script:Grid[$y1][$x1]
-    # Временное выполнение хода
     $script:Grid[$y2][$x2] = $piece
     $script:Grid[$y1][$x1] = $null
     $check = Test-KingInCheck $piece.Color
-    # Откат хода
     $script:Grid[$y1][$x1] = $piece
     $script:Grid[$y2][$x2] = $saved
     return $check
 }
 
-# Функция: Test-KingInCheck
-# Назначение: Проверяет, находится ли король указанного цвета под шахом
 function Test-KingInCheck($color) {
-    # Поиск позиции короля
     $kx = -1; $ky = -1
     for ($y = 0; $y -lt 8; $y++) {
         for ($x = 0; $x -lt 8; $x++) {
@@ -354,9 +324,8 @@ function Test-KingInCheck($color) {
         }
         if ($kx -ge 0) { break }
     }
-    if ($kx -lt 0) { return $false }  # Король не найден (теоретически невозможно)
+    if ($kx -lt 0) { return $false }
     
-    # Проверка: атакуется ли позиция короля вражескими фигурами
     $enemy = if ($color -eq 'White') { 'Black' } else { 'White' }
     for ($y = 0; $y -lt 8; $y++) {
         for ($x = 0; $x -lt 8; $x++) {
@@ -369,13 +338,10 @@ function Test-KingInCheck($color) {
     return $false
 }
 
-
 # ============================================================================
-# БЛОК 8: ГЕНЕРАЦИЯ ДОПУСТИМЫХ ХОДОВ И ПРОВЕРКА МАТА
+# БЛОК 5: ГЕНЕРАЦИЯ ХОДОВ (РЕАЛЬНАЯ ДОСКА)
 # ============================================================================
 
-# Функция: Calc-ValidMoves
-# Назначение: Заполняет массив $script:ValidMoves допустимыми ходами для выбранной фигуры
 function Calc-ValidMoves {
     $script:ValidMoves = @()
     if (!$script:HasSelection) { return }
@@ -388,12 +354,10 @@ function Calc-ValidMoves {
     }
 }
 
-# Функция: Test-HasAnyValidMoves
-# Назначение: Проверяет, есть ли у стороны $color хотя бы один легальный ход
-# Используется для определения мата или пата
 function Test-HasAnyValidMoves($color) {
     $old = $script:Turn
     $script:Turn = $color
+    $hasMoves = $false
     for ($y = 0; $y -lt 8; $y++) {
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:Grid[$y][$x]
@@ -401,48 +365,39 @@ function Test-HasAnyValidMoves($color) {
                 for ($ty = 0; $ty -lt 8; $ty++) {
                     for ($tx = 0; $tx -lt 8; $tx++) {
                         if (Test-ValidMove $x $y $tx $ty $false) {
-                            $script:Turn = $old
-                            return $true
+                            $hasMoves = $true; break
                         }
                     }
+                    if ($hasMoves) { break }
                 }
             }
+            if ($hasMoves) { break }
         }
+        if ($hasMoves) { break }
     }
     $script:Turn = $old
-    return $false
+    return $hasMoves
 }
 
-
-# ============================================================================
-# БЛОК 9: ПРЕВРАЩЕНИЕ ПЕШКИ (ПРОМОУШН)
-# ============================================================================
-
-# Функция: Convert-Pawn
-# Назначение: Превращает пешку, достигшую последней горизонтали, в выбранную фигуру
-# Параметры:
-#   $forcedType — если указан, превращение происходит автоматически (для ИИ)
-#   $isAI — флаг, что ход делает компьютер (всегда выбирает ферзя)
 function Convert-Pawn($x, $y, $forcedType = $null, $isAI = $false) {
     $pawn = $script:Grid[$y][$x]
+    if (!$pawn) { return }
     $color = $pawn.Color
     if ($forcedType) {
         $script:Grid[$y][$x] = @{ Type=$forcedType; Color=$color; X=$x; Y=$y }
         return
     }
     if ($isAI) {
-        # FIX #3: ИИ всегда выбирает ферзя для максимального преимущества
         $script:Grid[$y][$x] = @{ Type='Queen'; Color=$color; X=$x; Y=$y }
         return
     }
-    # Интерактивный выбор для игрока
     $prompt = "Pawn promotion: (Q)ueen, (R)ook, (B)ishop, (K)night: "
     while ($true) {
         Write-Host $prompt -NoNewline -ForegroundColor Cyan
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").Character
         Write-Host $key
         $choice = switch ($key) {
-            'Q' { 'Queen' } 'R' { 'Rook' } 'B' { 'Bishop' } 'K' { 'Knight' }
+            'Q' { 'Queen' }; 'R' { 'Rook' }; 'B' { 'Bishop' }; 'K' { 'Knight' }
             default { $null }
         }
         if ($choice) {
@@ -452,59 +407,38 @@ function Convert-Pawn($x, $y, $forcedType = $null, $isAI = $false) {
     }
 }
 
-
-# ============================================================================
-# БЛОК 10: ПРАВИЛА НИЧЬЕЙ
-# ============================================================================
-
-# Функция: Test-InsufficientMaterial
-# Назначение: Проверяет, достаточно ли материала на доске для постановки мата
-# Возвращает: $true если ничья по недостатку материала
 function Test-InsufficientMaterial {
     $whitePieces = @(); $blackPieces = @()
     for ($y = 0; $y -lt 8; $y++) {
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:Grid[$y][$x]
-            if ($p) {
+            if ($p -and $p.Type) {
                 if ($p.Color -eq 'White') { $whitePieces += $p.Type }
                 else { $blackPieces += $p.Type }
             }
         }
     }
-    
-    # Король против короля
     if ($whitePieces.Count -eq 1 -and $blackPieces.Count -eq 1) { return $true }
-    # Король + лёгкая фигура против короля
     if ($whitePieces.Count -eq 1 -and $blackPieces.Count -eq 2) {
         if ($blackPieces -contains 'Bishop' -or $blackPieces -contains 'Knight') { return $true }
     }
     if ($blackPieces.Count -eq 1 -and $whitePieces.Count -eq 2) {
         if ($whitePieces -contains 'Bishop' -or $whitePieces -contains 'Knight') { return $true }
     }
-    # Два слона на полях одного цвета (упрощённая проверка)
-    if ($whitePieces.Count -eq 2 -and $blackPieces.Count -eq 2) {
-        if (($whitePieces -contains 'Bishop') -and ($blackPieces -contains 'Bishop')) {
-            return $true
-        }
-    }
     return $false
 }
 
-# Функция: Save-Position
-# Назначение: Сохраняет текущую позицию доски в историю для проверки трёхкратного повтора
 function Save-Position {
     $pos = ""
     for ($y = 0; $y -lt 8; $y++) {
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:Grid[$y][$x]
-            if ($p) { $pos += "$($p.Color[0])$($p.Type[0])$x$y;" }
+            if ($p -and $p.Type) { $pos += "$($p.Color[0])$($p.Type[0])$x$y;" }
         }
     }
     $script:PositionHistory += $pos
 }
 
-# Функция: Test-ThreefoldRepetition
-# Назначение: Проверяет, встречалась ли текущая позиция на доске 3 раза
 function Test-ThreefoldRepetition {
     if ($script:PositionHistory.Count -lt 3) { return $false }
     $current = $script:PositionHistory[-1]
@@ -515,14 +449,10 @@ function Test-ThreefoldRepetition {
     return $count -ge 3
 }
 
-
 # ============================================================================
-# БЛОК 11: ВЫПОЛНЕНИЕ ХОДА И ОБНОВЛЕНИЕ СОСТОЯНИЯ
+# БЛОК 6: ВЫПОЛНЕНИЕ ХОДА (РЕАЛЬНАЯ ДОСКА)
 # ============================================================================
 
-# Функция: Do-Move
-# Назначение: Выполняет ход, обновляет состояние игры, проверяет окончание партии
-# Возвращает: $true если ход успешен, $false если ход нелегален
 function Do-Move($x1, $y1, $x2, $y2, $isAI = $false) {
     if (!(Test-ValidMove $x1 $y1 $x2 $y2 $false)) { return $false }
     
@@ -532,22 +462,16 @@ function Do-Move($x1, $y1, $x2, $y2, $isAI = $false) {
     $wasPawn = ($piece.Type -eq 'Pawn')
     $wasCapture = ($target -ne $null)
     
-    # === Обработка рокировки: перемещение ладьи ===
     if ($piece.Type -eq 'King' -and [Math]::Abs($x2 - $x1) -eq 2) {
         if ($x2 -gt $x1) {
-            # Короткая рокировка: ладья h1->f1 или h8->f8
-            $script:Grid[$y1][5] = $script:Grid[$y1][7]
+            $script:Grid[$y1][5] = @{ Type='Rook'; Color=$piece.Color; X=5; Y=$y1 }
             $script:Grid[$y1][7] = $null
-            $script:Grid[$y1][5].X = 5
         } else {
-            # Длинная рокировка: ладья a1->d1 или a8->d8
-            $script:Grid[$y1][3] = $script:Grid[$y1][0]
+            $script:Grid[$y1][3] = @{ Type='Rook'; Color=$piece.Color; X=3; Y=$y1 }
             $script:Grid[$y1][0] = $null
-            $script:Grid[$y1][3].X = 3
         }
     }
     
-    # === Обновление флагов рокировки после хода ===
     if ($piece.Type -eq 'King') {
         if ($piece.Color -eq 'White') { $script:WhiteKingMoved = $true }
         else { $script:BlackKingMoved = $true }
@@ -562,87 +486,451 @@ function Do-Move($x1, $y1, $x2, $y2, $isAI = $false) {
         }
     }
     
-    # === Обновление счётчика для правила 50 ходов ===
     if ($wasCapture -or $wasPawn) { $script:HalfMoveClock = 0 }
     else { $script:HalfMoveClock++ }
     
-    # === Физическое перемещение фигуры ===
-    $script:Grid[$y2][$x2] = $piece
+    $newType = $piece.Type
+    $script:Grid[$y2][$x2] = @{ Type=$newType; Color=$piece.Color; X=$x2; Y=$y2 }
     $script:Grid[$y1][$x1] = $null
-    $script:Grid[$y2][$x2].X = $x2
-    $script:Grid[$y2][$x2].Y = $y2
     
-    # === Превращение пешки при достижении последней горизонтали ===
     if ($wasPawn -and ($y2 -eq 0 -or $y2 -eq 7)) {
         Convert-Pawn $x2 $y2 $null $isAI
         $script:LastPromotion = $script:Grid[$y2][$x2].Type
     }
     
-    # Смена хода
     $script:Turn = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }
     $script:TotalMoves++
-    
-    # Сохранение позиции для проверки повторения
     Save-Position
     
-    # === Проверка окончания игры ===
     $check = Test-KingInCheck $script:Turn
     $can = Test-HasAnyValidMoves $script:Turn
     
-    if ($script:HalfMoveClock -ge 100) {
-        $script:Status = "DRAW! (50 move rule)"
-    } elseif (Test-InsufficientMaterial) {
-        $script:Status = "DRAW! (Insufficient material)"
-    } elseif (Test-ThreefoldRepetition) {
-        $script:Status = "DRAW! (Threefold repetition)"
-    } elseif ($check -and !$can) {
+    if ($script:HalfMoveClock -ge 100) { $script:Status = "DRAW! (50 move rule)" }
+    elseif (Test-InsufficientMaterial) { $script:Status = "DRAW! (Insufficient material)" }
+    elseif (Test-ThreefoldRepetition) { $script:Status = "DRAW! (Threefold repetition)" }
+    elseif ($check -and !$can) {
         $winner = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }
         $script:Status = "CHECKMATE! $winner wins!"
-    } elseif ($check) { 
-        $script:Status = "CHECK!" 
-    } elseif (!$can) { 
-        $script:Status = "STALEMATE! DRAW!" 
-    } else { 
-        $script:Status = "Turn: $script:Turn" 
+    } elseif ($check) { $script:Status = "CHECK!" }
+    elseif (!$can) { $script:Status = "STALEMATE! DRAW!" }
+    else { $script:Status = "Turn: $script:Turn" }
+    return $true
+}
+
+# ============================================================================
+# БЛОК 7: ВИРТУАЛЬНАЯ ДОСКА ДЛЯ ИИ
+# ============================================================================
+
+function Init-AIBoard {
+    $script:AIGrid = @()
+    for ($y = 0; $y -lt 8; $y++) {
+        $row = @()
+        for ($x = 0; $x -lt 8; $x++) {
+            $p = $script:Grid[$y][$x]
+            if ($p -and $p.Type) {
+                $row += @{ Type=$p.Type; Color=$p.Color; X=$x; Y=$y }
+            } else {
+                $row += $null
+            }
+        }
+        $script:AIGrid += ,$row
+    }
+    $script:AITurn = $script:Turn
+}
+
+function AI-Make-Move($x1, $y1, $x2, $y2) {
+    $piece = $script:AIGrid[$y1][$x1]
+    $captured = $script:AIGrid[$y2][$x2]
+    
+    if (!$piece -or !$piece.Type -or !$piece.Color) { return }
+    
+    $script:AILastMove = @{
+        FromX = $x1; FromY = $y1; ToX = $x2; ToY = $y2
+        PieceType = $piece.Type; PieceColor = $piece.Color
+        CapturedType = if ($captured -and $captured.Type) { $captured.Type } else { $null }
+        CapturedColor = if ($captured -and $captured.Color) { $captured.Color } else { $null }
+        Turn = $script:AITurn
+        Promotion = $null
+    }
+    
+    $script:AIGrid[$y1][$x1] = $null
+    
+    $newType = $piece.Type
+    if ($piece.Type -eq 'Pawn' -and ($y2 -eq 0 -or $y2 -eq 7)) {
+        $newType = 'Queen'
+        $script:AILastMove.Promotion = 'Queen'
+    }
+    $script:AIGrid[$y2][$x2] = @{ Type = $newType; Color = $piece.Color; X = $x2; Y = $y2 }
+    
+    $script:AITurn = if ($script:AITurn -eq 'White') { 'Black' } else { 'White' }
+}
+
+function AI-Undo-Move() {
+    if (!$script:AILastMove) { return }
+    $move = $script:AILastMove
+    
+    $script:AIGrid[$move.ToY][$move.ToX] = $null
+    
+    if ($move.PieceType) {
+        $script:AIGrid[$move.FromY][$move.FromX] = @{ 
+            Type = $move.PieceType; Color = $move.PieceColor
+            X = $move.FromX; Y = $move.FromY
+        }
+    }
+    
+    if ($move.CapturedType) {
+        $script:AIGrid[$move.ToY][$move.ToX] = @{ 
+            Type = $move.CapturedType; Color = $move.CapturedColor
+            X = $move.ToX; Y = $move.ToY
+        }
+    }
+    
+    $script:AITurn = $move.Turn
+    $script:AILastMove = $null
+}
+
+# ============================================================================
+# БЛОК 8: ПРОВЕРКА ХОДОВ (ВИРТУАЛЬНАЯ ДОСКА ИИ)
+# ============================================================================
+
+function AI-Test-ValidMove($x1, $y1, $x2, $y2, $ignoreCheck) {
+    if ($x1 -lt 0 -or $x1 -gt 7 -or $y1 -lt 0 -or $y1 -gt 7) { return $false }
+    if ($x2 -lt 0 -or $x2 -gt 7 -or $y2 -lt 0 -or $y2 -gt 7) { return $false }
+    
+    $p = $script:AIGrid[$y1][$x1]
+    $target = $script:AIGrid[$y2][$x2]
+    
+    if (!$p -or !$p.Type -or !$p.Color) { return $false }
+    if (!$ignoreCheck -and $p.Color -ne $script:AITurn) { return $false }
+    if ($target -and $target.Color -eq $p.Color) { return $false }
+    if ($x1 -eq $x2 -and $y1 -eq $y2) { return $false }
+    if ($target -and $target.Type -eq 'King' -and !$ignoreCheck) { return $false }
+
+    $dx = $x2 - $x1; $dy = $y2 - $y1
+    $absDx = [Math]::Abs($dx); $absDy = [Math]::Abs($dy)
+    $dir = if ($p.Color -eq 'White') { -1 } else { 1 }
+
+    switch ($p.Type) {
+        'Pawn' {
+            if ($dx -eq 0) {
+                if ($dy -eq $dir -and !$target) {
+                    if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                    return $true
+                }
+                if (($y1 -eq 1 -or $y1 -eq 6) -and $dy -eq 2 * $dir -and !$target) {
+                    $midY = $y1 + $dir
+                    if (!$script:AIGrid[$midY][$x1]) {
+                        if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                        return $true
+                    }
+                }
+            }
+            if ($absDx -eq 1 -and $dy -eq $dir -and $target) {
+                if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Knight' {
+            if ($absDx * $absDy -eq 2) {
+                if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'King' {
+            if ($absDx -le 1 -and $absDy -le 1) {
+                if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Rook' {
+            if ($dx -eq 0 -or $dy -eq 0) {
+                if (!(AI-Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+                if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Bishop' {
+            if ($absDx -eq $absDy) {
+                if (!(AI-Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+                if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        'Queen' {
+            if ($absDx -eq $absDy -or $dx -eq 0 -or $dy -eq 0) {
+                if (!(AI-Test-PathClear $x1 $y1 $x2 $y2)) { return $false }
+                if (!$ignoreCheck -and (AI-Test-LeavesKingInCheck $x1 $y1 $x2 $y2)) { return $false }
+                return $true
+            }
+            return $false
+        }
+        default { return $false }
+    }
+}
+
+function AI-Test-PathClear($x1, $y1, $x2, $y2) {
+    $stepX = [Math]::Sign($x2 - $x1)
+    $stepY = [Math]::Sign($y2 - $y1)
+    $x = $x1 + $stepX; $y = $y1 + $stepY
+    while ($x -ne $x2 -or $y -ne $y2) {
+        if ($script:AIGrid[$y][$x]) { return $false }
+        $x += $stepX; $y += $stepY
     }
     return $true
 }
 
+function AI-Test-LeavesKingInCheck($x1, $y1, $x2, $y2) {
+    $saved = $script:AIGrid[$y2][$x2]
+    $piece = $script:AIGrid[$y1][$x1]
+    $script:AIGrid[$y2][$x2] = $piece
+    $script:AIGrid[$y1][$x1] = $null
+    $check = AI-Test-KingInCheck $piece.Color
+    $script:AIGrid[$y1][$x1] = $piece
+    $script:AIGrid[$y2][$x2] = $saved
+    return $check
+}
+
+function AI-Test-KingInCheck($color) {
+    $kx = -1; $ky = -1
+    for ($y = 0; $y -lt 8; $y++) {
+        for ($x = 0; $x -lt 8; $x++) {
+            $p = $script:AIGrid[$y][$x]
+            if ($p -and $p.Type -eq 'King' -and $p.Color -eq $color) {
+                $kx = $x; $ky = $y; break
+            }
+        }
+        if ($kx -ge 0) { break }
+    }
+    if ($kx -lt 0) { return $false }
+    
+    $enemy = if ($color -eq 'White') { 'Black' } else { 'White' }
+    for ($y = 0; $y -lt 8; $y++) {
+        for ($x = 0; $x -lt 8; $x++) {
+            $p = $script:AIGrid[$y][$x]
+            if ($p -and $p.Color -eq $enemy) {
+                if (AI-Test-ValidMove $x $y $kx $ky $true) { return $true }
+            }
+        }
+    }
+    return $false
+}
 
 # ============================================================================
-# БЛОК 12: ОТРИСОВКА ДОСКИ В КОНСОЛИ
+# БЛОК 9: ОЦЕНКА И ПОИСК (ИИ)
 # ============================================================================
 
-# Функция: Draw-Board
-# Назначение: Очищает экран и отрисовывает шахматную доску с фигурами, подсветкой и статусом
+function AI-Evaluate-Position {
+    $score = 0
+    for ($y = 0; $y -lt 8; $y++) {
+        for ($x = 0; $x -lt 8; $x++) {
+            $p = $script:AIGrid[$y][$x]
+            if ($p -and $p.Type -and $p.Color) {
+                $material = 0
+                if ($p.Type -eq 'Pawn')   { $material = 100 }
+                elseif ($p.Type -eq 'Knight') { $material = 320 }
+                elseif ($p.Type -eq 'Bishop') { $material = 330 }
+                elseif ($p.Type -eq 'Rook')   { $material = 500 }
+                elseif ($p.Type -eq 'Queen')  { $material = 900 }
+                elseif ($p.Type -eq 'King')   { $material = 20000 }
+                
+                $position = 0
+                $mirrorIndex = if ($p.Color -eq 'White') { (7-$y) * 8 + $x } else { $y * 8 + $x }
+                if ($p.Type -eq 'Pawn')   { $position = ($script:PawnTable[$mirrorIndex]) }
+                elseif ($p.Type -eq 'Knight') { $position = ($script:KnightTable[$mirrorIndex]) }
+                
+                $value = $material + $position
+                if ($p.Color -eq $script:ComputerColor) { $score += $value }
+                else { $score -= $value }
+            }
+        }
+    }
+    return $score
+}
+
+function AI-Get-AllValidMoves($color) {
+    $moves = @()
+    for ($y = 0; $y -lt 8; $y++) {
+        for ($x = 0; $x -lt 8; $x++) {
+            $p = $script:AIGrid[$y][$x]
+            if ($p -and $p.Type -and $p.Color -eq $color) {
+                for ($ty = 0; $ty -lt 8; $ty++) {
+                    for ($tx = 0; $tx -lt 8; $tx++) {
+                        $target = $script:AIGrid[$ty][$tx]
+                        if ($target -and $target.Color -eq $color) { continue }
+                        if (AI-Test-ValidMove $x $y $tx $ty $true) {
+                            $moves += @{ fromX=$x; fromY=$y; toX=$tx; toY=$ty }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return $moves
+}
+
+function AI-Get-CaptureMoves($color) {
+    $moves = @()
+    for ($y = 0; $y -lt 8; $y++) {
+        for ($x = 0; $x -lt 8; $x++) {
+            $p = $script:AIGrid[$y][$x]
+            if ($p -and $p.Type -and $p.Color -eq $color) {
+                for ($ty = 0; $ty -lt 8; $ty++) {
+                    for ($tx = 0; $tx -lt 8; $tx++) {
+                        $target = $script:AIGrid[$ty][$tx]
+                        if ($target -and $target.Type -and $target.Color -ne $color) {
+                            if (AI-Test-ValidMove $x $y $tx $ty $true) {
+                                $moves += @{ fromX=$x; fromY=$y; toX=$tx; toY=$ty }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return $moves
+}
+
+function AI-Quiescence-Search($alpha, $beta) {
+    $standPat = (AI-Evaluate-Position)
+    if ($standPat -ge $beta) { return  $beta }
+    if ($alpha -lt $standPat) { $alpha =  $standPat }
+    
+    $captures = AI-Get-CaptureMoves $script:AITurn
+    foreach ($move in $captures) {
+        AI-Make-Move $move.fromX $move.fromY $move.toX $move.toY
+         $subScore =  (AI-Quiescence-Search $( -$beta) $( -$alpha))
+         $score =  (-$subScore)
+        AI-Undo-Move
+        if ($score -ge $beta) { return  $beta }
+        if ($score -gt $alpha) { $alpha =  $score }
+    }
+    return  $alpha
+}
+
+function AI-AlphaBeta-Search($depth, $alpha, $beta, $isMaximizing) {
+     $depth =  $depth
+     $alpha =  $alpha
+     $beta =  $beta
+    
+    if ($depth -eq 0) { return AI-Quiescence-Search $alpha $beta }
+    
+    $moves = AI-Get-AllValidMoves $script:AITurn
+    if ($moves.Count -eq 0) { return  (AI-Evaluate-Position) }
+    
+    if ($isMaximizing) {
+         $maxEval = -999999
+        foreach ($move in $moves) {
+            AI-Make-Move $move.fromX $move.fromY $move.toX $move.toY
+             $eval =  (AI-AlphaBeta-Search ($depth-1) $alpha $beta $false)
+            AI-Undo-Move
+            if ($eval -gt $maxEval) { $maxEval = $eval }
+            $alpha = [Math]::Max($alpha, $eval)
+            if ($beta -le $alpha) { break }
+        }
+        return $maxEval
+    } else {
+         $minEval = 999999
+        foreach ($move in $moves) {
+            AI-Make-Move $move.fromX $move.fromY $move.toX $move.toY
+             $eval =  (AI-AlphaBeta-Search ($depth-1) $alpha $beta $true)
+            AI-Undo-Move
+            if ($eval -lt $minEval) { $minEval = $eval }
+            $beta = [Math]::Min($beta, $eval)
+            if ($beta -le $alpha) { break }
+        }
+        return $minEval
+    }
+}
+
+function Get-AIMove-Improved {
+    Write-Host "ИИ думает..." -ForegroundColor Cyan
+    $startTime = Get-Date
+    
+    # КЛЮЧЕВОЕ: Копируем доску для ИИ
+    Init-AIBoard
+    
+     $bestScore = -999999
+     $alpha = -999999
+     $beta = 999999
+     $depth = 4
+    $bestMove = $null
+    
+    $moves = AI-Get-AllValidMoves $script:ComputerColor
+    if ($moves.Count -eq 0) { return $null }
+    
+    # Упорядочивание ходов
+    $moves = $moves | ForEach-Object {
+        $m = $_
+         $score = 0
+        $target = $script:AIGrid[$m.toY][$m.toX]
+        if ($target -and $target.Type) {
+            if ($target.Type -eq 'Queen')  { $score = 900 }
+            elseif ($target.Type -eq 'Rook')    { $score = 500 }
+            elseif ($target.Type -eq 'Bishop')  { $score = 330 }
+            elseif ($target.Type -eq 'Knight')  { $score = 320 }
+            elseif ($target.Type -eq 'Pawn')    { $score = 100 }
+        }
+        [PSCustomObject]@{
+            fromX = $m.fromX; fromY = $m.fromY
+            toX = $m.toX; toY = $m.toY
+            captureScore = $score
+        }
+    } | Sort-Object -Property captureScore -Descending | ForEach-Object {
+        @{ fromX = $_.fromX; fromY = $_.fromY; toX = $_.toX; toY = $_.toY }
+    }
+    
+    foreach ($move in $moves) {
+        AI-Make-Move $move.fromX $move.fromY $move.toX $move.toY
+         $score =  (AI-AlphaBeta-Search ($depth-1) $alpha $beta $false)
+        AI-Undo-Move
+        if ($score -gt $bestScore) {
+            $bestScore = $score
+            $bestMove = $move
+        }
+        $alpha = [Math]::Max($alpha, $bestScore)
+    }
+    
+    $elapsed = (Get-Date) - $startTime
+    Write-Host "ИИ: глубина=$depth, оценка=$bestScore, время=$($elapsed.TotalSeconds)с" -ForegroundColor Gray
+    return $bestMove
+}
+
+# ============================================================================
+# БЛОК 10: ОТРИСОВКА
+# ============================================================================
+
 function Draw-Board {
     Clear-Host
     $cols = @('A','B','C','D','E','F','G','H')
     Write-Host ("    " + ($cols -join '   '))
-    
     for ($y = 0; $y -lt 8; $y++) {
-        # Отрисовка горизонтальных разделителей
-        if ($y -eq 0) {
-            Write-Host ("$(8-$y) ╔" + ("═══╦" * 7) + "═══╗")
-        } else {
-            Write-Host ("$(8-$y) ╠" + ("═══╬" * 7) + "═══╣")
-        }
+        if ($y -eq 0) { Write-Host ("$(8-$y) ╔" + ("═══╦" * 7) + "═══╗") }
+        else { Write-Host ("$(8-$y) ╠" + ("═══╬" * 7) + "═══╣") }
 
         Write-Host -NoNewline "  ║"
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:Grid[$y][$x]
-            $s = Get-Symbol $p
-            # Базовые цвета: шахматная раскраска
+            
+            $s = ' '
+            if ($p -and $p.Type -and $p.Color) {
+                try { $s = Get-Symbol $p } catch { $s = '?' }
+            }
+            
             $bg = if (($x + $y) % 2) { 'DarkGray' } else { 'Gray' }
             $fg = if ($p -and $p.Color -eq 'White') { 'White' } else { 'Black' }
             
-            # Подсветка: король под шахом
-            if ($p -and $p.Type -eq 'King' -and (Test-KingInCheck $p.Color)) { $bg = 'Red'; $fg = 'White' }
-            # Подсветка: допустимые ходы для выбранной фигуры
+            if ($p -and $p.Type -eq 'King' -and $p.Color) {
+                try {
+                    if (Test-KingInCheck $p.Color) { $bg = 'Red'; $fg = 'White' }
+                } catch {}
+            }
             if ($script:ValidMoves -contains "$x,$y") { $bg = 'Green' }
-            # Подсветка: выбранная фигура
             if ($script:HasSelection -and $x -eq $script:StartX -and $y -eq $script:StartY) { $bg = 'Cyan'; $fg = 'Black' }
-            # Подсветка: позиция курсора
             if ($x -eq $script:SelX -and $y -eq $script:SelY) { $bg = 'Blue'; $fg = 'Yellow' }
             
             Write-Host " $s " -NoNewline -ForegroundColor $fg -BackgroundColor $bg
@@ -650,26 +938,18 @@ function Draw-Board {
         }
         Write-Host
     }
-    # Нижняя рамка и координаты
     Write-Host ("  ╚" + ("═══╩" * 7) + "═══╝")
     Write-Host ("    " + ($cols -join '   '))
-    
-    # Статус игры и информация
     Write-Host $script:Status -ForegroundColor Yellow
     Write-Host "Cursor: $($script:SelX),$($script:SelY) | Moves: $($script:ValidMoves.Count) | Half-move clock: $($script:HalfMoveClock)"
-    if ($script:NetworkMode) {
-        Write-Host "LAN mode: You are $($script:LocalColor)" -ForegroundColor Cyan
-    }
+    if ($script:NetworkMode) { Write-Host "LAN mode: You are $($script:LocalColor)" -ForegroundColor Cyan }
     Write-Host "Arrows: Move | Enter: Select/Move | Esc: Exit"
 }
 
-
 # ============================================================================
-# БЛОК 13: СЕТЕВЫЕ ФУНКЦИИ (LAN-РЕЖИМ)
+# БЛОК 11: СЕТЕВЫЕ ФУНКЦИИ
 # ============================================================================
 
-# Функция: Setup-LAN
-# Назначение: Инициализирует сетевое соединение — сервер или клиент
 function Setup-LAN {
     Write-Host "LAN игра:" -ForegroundColor Cyan
     Write-Host "1. Создать игру (сервер)"
@@ -678,9 +958,7 @@ function Setup-LAN {
     while ($choice -notin '1','2') {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         switch ($key.VirtualKeyCode) {
-            49 { $choice = 'server' }
-            50 { $choice = 'client' }
-            27 { exit }
+            49 { $choice = 'server' }; 50 { $choice = 'client' }; 27 { exit }
         }
     }
     $port = 8888
@@ -693,19 +971,14 @@ function Setup-LAN {
         $script:TcpClient = $script:TcpListener.AcceptTcpClient()
         Write-Host "Клиент подключился!" -ForegroundColor Green
         $script:NetworkStream = $script:TcpClient.GetStream()
-    }
-    else {
+    } else {
         $script:IsServer = $false; $script:IsClient = $true
         $script:LocalColor = 'Black'; $script:RemoteColor = 'White'
         $ip = Read-Host "Введите IP-адрес сервера"
         Write-Host "Подключение к {$ip}:{$port}..." -ForegroundColor Yellow
         $script:TcpClient = New-Object System.Net.Sockets.TcpClient
-        try {
-            $script:TcpClient.Connect($ip, $port)
-        } catch {
-            Write-Host "Не удалось подключиться: $_" -ForegroundColor Red
-            pause; exit
-        }
+        try { $script:TcpClient.Connect($ip, $port) }
+        catch { Write-Host "Не удалось подключиться: $_" -ForegroundColor Red; pause; exit }
         Write-Host "Подключено!" -ForegroundColor Green
         $script:NetworkStream = $script:TcpClient.GetStream()
     }
@@ -713,8 +986,6 @@ function Setup-LAN {
     $script:Turn = 'White'
 }
 
-# Функция: Send-Move
-# Назначение: Отправляет координаты хода и тип превращения по сети
 function Send-Move($x1,$y1,$x2,$y2,$promo=$null) {
     $msg = "$x1,$y1,$x2,$y2"
     if ($promo) { $msg += ",$promo" }
@@ -723,20 +994,15 @@ function Send-Move($x1,$y1,$x2,$y2,$promo=$null) {
     $script:NetworkStream.Flush()
 }
 
-# Функция: Receive-Move
-# Назначение: Получает ход от удалённого игрока, обрабатывает нажатие Esc для выхода
 function Receive-Move {
     $stream = $script:NetworkStream
     $buffer = New-Object byte[] 1024
     while ($true) {
         if ($stream.DataAvailable) {
             $read = $stream.Read($buffer, 0, $buffer.Length)
-            if ($read -gt 0) {
-                $message = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read)
-                return $message.Trim()
-            } else { return $null }
+            if ($read -gt 0) { return [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read).Trim() }
+            else { return $null }
         }
-        # Позволяет выйти по Esc во время ожидания
         if ($host.UI.RawUI.KeyAvailable) {
             $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             if ($key.VirtualKeyCode -eq 27) { Close-Network; exit }
@@ -745,32 +1011,21 @@ function Receive-Move {
     }
 }
 
-# Функция: Apply-RemoteMove
-# Назначение: Применяет полученный от сети ход к локальной доске (аналог Do-Move без ввода)
 function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
-    if (!(Test-ValidMove $x1 $y1 $x2 $y2 $false)) {
-        Write-Host "Получен нелегальный ход от противника!" -ForegroundColor Red
-        return
-    }
-    $piece = $script:Grid[$y1][$x1]
-    $target = $script:Grid[$y2][$x2]
-    $wasPawn = ($piece.Type -eq 'Pawn')
-    $wasCapture = ($target -ne $null)
+    if (!(Test-ValidMove $x1 $y1 $x2 $y2 $false)) { Write-Host "Нелегальный ход!" -ForegroundColor Red; return }
+    $piece = $script:Grid[$y1][$x1]; $target = $script:Grid[$y2][$x2]
+    $wasPawn = ($piece.Type -eq 'Pawn'); $wasCapture = ($target -ne $null)
     
-    # Обработка рокировки
     if ($piece.Type -eq 'King' -and [Math]::Abs($x2 - $x1) -eq 2) {
         if ($x2 -gt $x1) {
-            $script:Grid[$y1][5] = $script:Grid[$y1][7]; $script:Grid[$y1][7] = $null; $script:Grid[$y1][5].X = 5
+            $script:Grid[$y1][5] = @{ Type='Rook'; Color=$piece.Color; X=5; Y=$y1 }
+            $script:Grid[$y1][7] = $null
         } else {
-            $script:Grid[$y1][3] = $script:Grid[$y1][0]; $script:Grid[$y1][0] = $null; $script:Grid[$y1][3].X = 3
+            $script:Grid[$y1][3] = @{ Type='Rook'; Color=$piece.Color; X=3; Y=$y1 }
+            $script:Grid[$y1][0] = $null
         }
     }
-    
-    # Обновление флагов
-    if ($piece.Type -eq 'King') {
-        if ($piece.Color -eq 'White') { $script:WhiteKingMoved = $true }
-        else { $script:BlackKingMoved = $true }
-    }
+    if ($piece.Type -eq 'King') { if ($piece.Color -eq 'White') { $script:WhiteKingMoved = $true } else { $script:BlackKingMoved = $true } }
     if ($piece.Type -eq 'Rook') {
         if ($piece.Color -eq 'White') {
             if ($x1 -eq 7 -and $y1 -eq 7) { $script:WhiteRookKingsideMoved = $true }
@@ -780,175 +1035,80 @@ function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
             if ($x1 -eq 0 -and $y1 -eq 0) { $script:BlackRookQueensideMoved = $true }
         }
     }
-    
-    # Счётчики и перемещение
-    if ($wasCapture -or $wasPawn) { $script:HalfMoveClock = 0 }
-    else { $script:HalfMoveClock++ }
-    $script:Grid[$y2][$x2] = $piece; $script:Grid[$y1][$x1] = $null
-    $script:Grid[$y2][$x2].X = $x2; $script:Grid[$y2][$x2].Y = $y2
-    
-    # Превращение пешки
+    if ($wasCapture -or $wasPawn) { $script:HalfMoveClock = 0 } else { $script:HalfMoveClock++ }
+    $script:Grid[$y2][$x2] = @{ Type=$piece.Type; Color=$piece.Color; X=$x2; Y=$y2 }
+    $script:Grid[$y1][$x1] = $null
     if ($wasPawn -and ($y2 -eq 0 -or $y2 -eq 7)) {
-        if ($promo) {
-            $color = $script:Grid[$y2][$x2].Color
-            $script:Grid[$y2][$x2] = @{ Type=$promo; Color=$color; X=$x2; Y=$y2 }
-        } else {
-            $color = $script:Grid[$y2][$x2].Color
-            $script:Grid[$y2][$x2] = @{ Type='Queen'; Color=$color; X=$x2; Y=$y2 }
-        }
+        if ($promo) { $script:Grid[$y2][$x2] = @{ Type=$promo; Color=$piece.Color; X=$x2; Y=$y2 } }
+        else { $script:Grid[$y2][$x2] = @{ Type='Queen'; Color=$piece.Color; X=$x2; Y=$y2 } }
     }
-    
-    # Завершение хода
     $script:Turn = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }
     $script:TotalMoves++; Save-Position
     $check = Test-KingInCheck $script:Turn; $can = Test-HasAnyValidMoves $script:Turn
     if ($script:HalfMoveClock -ge 100) { $script:Status = "DRAW! (50 move rule)" }
     elseif (Test-InsufficientMaterial) { $script:Status = "DRAW! (Insufficient material)" }
     elseif (Test-ThreefoldRepetition) { $script:Status = "DRAW! (Threefold repetition)" }
-    elseif ($check -and !$can) {
-        $winner = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }
-        $script:Status = "CHECKMATE! $winner wins!"
-    } elseif ($check) { $script:Status = "CHECK!" }
+    elseif ($check -and !$can) { $winner = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }; $script:Status = "CHECKMATE! $winner wins!" }
+    elseif ($check) { $script:Status = "CHECK!" }
     elseif (!$can) { $script:Status = "STALEMATE! DRAW!" }
     else { $script:Status = "Turn: $script:Turn" }
 }
 
-# Функция: Close-Network
-# Назначение: Корректно закрывает все сетевые соединения
 function Close-Network {
     if ($script:NetworkStream) { $script:NetworkStream.Close() }
     if ($script:TcpClient) { $script:TcpClient.Close() }
     if ($script:TcpListener) { $script:TcpListener.Stop() }
 }
 
-
 # ============================================================================
-# БЛОК 14: ИИ (ПРОСТОЙ АЛГОРИТМ ХОДА КОМПЬЮТЕРА)
-# ============================================================================
-
-# Функция: Get-AIMove
-# Назначение: Выбирает ход для компьютера на основе простой эвристики
-# Возвращает: хэш с координатами хода или $null если ходов нет
-function Get-AIMove {
-    $color = $script:Turn
-    $moves = @()
-    $bestMove = $null
-    $bestScore = -9999
-    
-    # Перебор всех легальных ходов
-    for ($y = 0; $y -lt 8; $y++) {
-        for ($x = 0; $x -lt 8; $x++) {
-            $p = $script:Grid[$y][$x]
-            if ($p -and $p.Color -eq $color) {
-                for ($ty = 0; $ty -lt 8; $ty++) {
-                    for ($tx = 0; $tx -lt 8; $tx++) {
-                        if (Test-ValidMove $x $y $tx $ty $false) {
-                            $moves += @{ fromX = $x; fromY = $y; toX = $tx; toY = $ty }
-                            
-                            # === Простая оценка хода ===
-                            $score = 0
-                            $target = $script:Grid[$ty][$tx]
-                            # Бонус за взятие фигуры по её относительной силе
-                            if ($target) {
-                                $score += switch ($target.Type) {
-                                    'Queen' { 900 }; 'Rook' { 500 }; 'Bishop' { 300 }; 'Knight' { 300 }; 'Pawn' { 100 }; default { 0 }
-                                }
-                            }
-                            # Предпочтение продвижению пешек
-                            if ($p.Type -eq 'Pawn') { $score += 10 }
-                            # Предпочтение контролю центра доски
-                            if ($tx -in 3,4 -and $ty -in 3,4) { $score += 5 }
-                            
-                            if ($score -gt $bestScore) {
-                                $bestScore = $score
-                                $bestMove = @{ fromX = $x; fromY = $y; toX = $tx; toY = $ty }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    if ($moves.Count -eq 0) { return $null }
-    # Если есть выгодный ход — выбираем его, иначе случайный из легальных
-    if ($bestMove -and $bestScore -gt 0) { return $bestMove }
-    $random = Get-Random -Maximum $moves.Count
-    return $moves[$random]
-}
-
-
-# ============================================================================
-# БЛОК 15: ИНИЦИАЛИЗАЦИЯ И ВЫБОР РЕЖИМА ИГРЫ
+# БЛОК 12: ГЛАВНЫЙ ЦИКЛ
 # ============================================================================
 
-# Инициализация доски и статуса
 Init-Grid
 $script:Status = "Turn: $script:Turn"
 Save-Position
 
-# Меню выбора режима
 $GameMode = ''
 while ($GameMode -notin 'TwoPlayer','VsAI','LAN') {
     Clear-Host
     Write-Host "Выберите режим:" -ForegroundColor Cyan
     Write-Host "1. Два игрока (локально)"
-    Write-Host "2. Против компьютера"
+    Write-Host "2. Против компьютера (ИИ с Alpha-Beta + Quiescence)"
     Write-Host "3. LAN игра"
     Write-Host "> " -NoNewline
-    
     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     switch ($key.VirtualKeyCode) {
-        49 { $GameMode = 'TwoPlayer' }
-        50 { $GameMode = 'VsAI' }
-        51 { $GameMode = 'LAN' }
-        27 { exit }
+        49 { $GameMode = 'TwoPlayer' }; 50 { $GameMode = 'VsAI' }; 51 { $GameMode = 'LAN' }; 27 { exit }
     }
 }
 $script:GameMode = $GameMode
 
-# Настройка режима "Против компьютера"
 if ($GameMode -eq 'VsAI') {
     Write-Host "Выберите цвет (W - белые, B - чёрные):" -ForegroundColor Cyan
     do {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-        switch ($key.VirtualKeyCode) {
-            87 { $script:PlayerColor = 'White' }  # W
-            66 { $script:PlayerColor = 'Black' }  # B
-        }
+        switch ($key.VirtualKeyCode) { 87 { $script:PlayerColor = 'White' }; 66 { $script:PlayerColor = 'Black' } }
     } until ($script:PlayerColor -in 'White','Black')
     $script:ComputerColor = if ($script:PlayerColor -eq 'White') { 'Black' } else { 'White' }
-}
-# Настройка LAN-режима
-elseif ($GameMode -eq 'LAN') {
-    Clear-Host
-    Setup-LAN
-}
+} elseif ($GameMode -eq 'LAN') { Clear-Host; Setup-LAN }
+
 Clear-Host
-
-
-# ============================================================================
-# БЛОК 16: ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ
-# ============================================================================
 
 while ($true) {
     Draw-Board
 
-    # === Проверка окончания игры ===
     if ($script:Status -like "*MATE*" -or $script:Status -like "*STALEMATE*" -or $script:Status -like "*DRAW*") {
         Write-Host "Press Esc to exit or any key to restart" -ForegroundColor Green
         $k = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         if ($k.VirtualKeyCode -eq 27) { Close-Network; break }
-        # Перезапуск партии
-        Init-Grid; $script:Status = "Turn: $script:Turn"
-        $script:PositionHistory = @(); Save-Position
+        Init-Grid; $script:Status = "Turn: $script:Turn"; $script:PositionHistory = @(); Save-Position
         continue
     }
 
-    # === Ход компьютера (режим VsAI) ===
+    # Ход ИИ
     if ($GameMode -eq 'VsAI' -and $script:Turn -eq $script:ComputerColor) {
-        Start-Sleep -Milliseconds 500  # Небольшая задержка для естественности
-        $aiMove = Get-AIMove
+        Start-Sleep -Milliseconds 300
+        $aiMove = Get-AIMove-Improved
         if ($aiMove) {
             Do-Move $aiMove.fromX $aiMove.fromY $aiMove.toX $aiMove.toY $true
             $script:HasSelection = $false; $script:ValidMoves = @()
@@ -956,37 +1116,30 @@ while ($true) {
         }
     }
 
-    # === Обработка сетевого хода (LAN-режим) ===
+    # LAN режим
     if ($script:NetworkMode -and $script:Turn -eq $script:RemoteColor) {
         $moveData = Receive-Move
         if ($moveData) {
             $parts = $moveData -split ','
-            $x1 = [int]$parts[0]; $y1 = [int]$parts[1]
-            $x2 = [int]$parts[2]; $y2 = [int]$parts[3]
+            $x1 =  $parts[0]; $y1 =  $parts[1]; $x2 =  $parts[2]; $y2 =  $parts[3]
             $promo = if ($parts.Count -gt 4) { $parts[4] } else { $null }
             Apply-RemoteMove $x1 $y1 $x2 $y2 $promo
             $script:HasSelection = $false; $script:ValidMoves = @()
             continue
-        } else {
-            Write-Host "Сетевое соединение разорвано." -ForegroundColor Red
-            pause; Close-Network; break
-        }
+        } else { Write-Host "Сетевое соединение разорвано." -ForegroundColor Red; pause; Close-Network; break }
     }
 
-    # === Обработка ввода игрока ===
+    # Ввод игрока
     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    if ($key.VirtualKeyCode -eq 27) { Close-Network; break }  # Выход по Esc
+    if ($key.VirtualKeyCode -eq 27) { Close-Network; break }
     
-    # Перемещение курсора стрелками
-    if ($key.VirtualKeyCode -eq 38 -and $script:SelY -gt 0) { $script:SelY-- }  # Up
-    if ($key.VirtualKeyCode -eq 40 -and $script:SelY -lt 7) { $script:SelY++ }  # Down
-    if ($key.VirtualKeyCode -eq 37 -and $script:SelX -gt 0) { $script:SelX-- }  # Left
-    if ($key.VirtualKeyCode -eq 39 -and $script:SelX -lt 7) { $script:SelX++ }  # Right
+    if ($key.VirtualKeyCode -eq 38 -and $script:SelY -gt 0) { $script:SelY-- }
+    if ($key.VirtualKeyCode -eq 40 -and $script:SelY -lt 7) { $script:SelY++ }
+    if ($key.VirtualKeyCode -eq 37 -and $script:SelX -gt 0) { $script:SelX-- }
+    if ($key.VirtualKeyCode -eq 39 -and $script:SelX -lt 7) { $script:SelX++ }
     
-    # Обработка нажатия Enter: выбор фигуры / выполнение хода
     if ($key.VirtualKeyCode -eq 13) {
         if (!$script:HasSelection) {
-            # Выбор фигуры, если она своя и сейчас её ход
             $p = $script:Grid[$script:SelY][$script:SelX]
             if ($p -and $p.Color -eq $script:Turn) {
                 $script:HasSelection = $true
@@ -994,22 +1147,15 @@ while ($true) {
                 Calc-ValidMoves
             }
         } else {
-            # Попытка выполнить ход на выбранную клетку
             if (Do-Move $script:StartX $script:StartY $script:SelX $script:SelY $false) {
-                if ($script:NetworkMode) {
-                    Send-Move $script:StartX $script:StartY $script:SelX $script:SelY $script:LastPromotion
-                }
+                if ($script:NetworkMode) { Send-Move $script:StartX $script:StartY $script:SelX $script:SelY $script:LastPromotion }
                 $script:HasSelection = $false; $script:ValidMoves = @()
             } else {
-                # Если ход нелегален, но выбрана своя фигура — перевыбираем её
                 $p = $script:Grid[$script:SelY][$script:SelX]
                 if ($p -and $p.Color -eq $script:Turn) {
                     $script:StartX = $script:SelX; $script:StartY = $script:SelY
                     Calc-ValidMoves
-                } else {
-                    # Иначе снимаем выделение
-                    $script:HasSelection = $false; $script:ValidMoves = @()
-                }
+                } else { $script:HasSelection = $false; $script:ValidMoves = @() }
             }
         }
     }

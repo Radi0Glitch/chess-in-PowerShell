@@ -713,7 +713,7 @@ function AI-Test-KingInCheck($color) {
         for ($x = 0; $x -lt 8; $x++) {
             $p = $script:AIGrid[$y][$x]
             if ($p -and $p.Color -eq $enemy) {
-                if (AI-Test-ValidMove $x $y $kx $ky $true) { return $true }
+                if (AI-Test-ValidMove $x $y $kx $ky $false) { return $true }
             }
         }
     }

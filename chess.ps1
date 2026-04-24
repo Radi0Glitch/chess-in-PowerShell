@@ -932,10 +932,8 @@ function Get-AIMove {
     }
     
     if ($moves.Count -eq 0) { return $null }
-    # Если есть выгодный ход — выбираем его, иначе случайный из легальных
-    if ($bestMove -and $bestScore -gt 0) { return $bestMove }
-    $random = Get-Random -Maximum $moves.Count
-    return $moves[$random]
+    # Возвращаем ход с наилучшей оценкой (bestMove всегда установлен при наличии ходов)
+    return $bestMove
 }
 
 
@@ -1011,10 +1009,10 @@ while ($true) {
         Start-Sleep -Milliseconds 500  # Небольшая задержка для естественности
         $aiMove = Get-AIMove
         if ($aiMove) {
-            Do-Move $aiMove.fromX $aiMove.fromY $aiMove.toX $aiMove.toY $true
+            $null = Do-Move $aiMove.fromX $aiMove.fromY $aiMove.toX $aiMove.toY $true
             $script:HasSelection = $false; $script:ValidMoves = @()
-            continue
         }
+        continue  # Всегда возвращаемся в начало цикла: проверка статуса корректно обрабатывает конец игры
     }
 
     # === Обработка сетевого хода (LAN-режим) ===

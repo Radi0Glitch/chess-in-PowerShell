@@ -612,7 +612,9 @@ function Do-Move($x1, $y1, $x2, $y2, $isAI = $false) {
 
     # === Обновление цели для взятия на проходе ===
     if ($wasPawn -and [Math]::Abs($y2 - $y1) -eq 2) {
-        $script:EnPassantTarget = @{ X = $x2; Y = ($y1 + [Math]::Sign($y2 - $y1)) }
+        # Запоминаем клетку, через которую пешка "перепрыгнула" (потенциальная цель для взятия на проходе)
+        $enPassantY = $y1 + [Math]::Sign($y2 - $y1)
+        $script:EnPassantTarget = @{ X = $x2; Y = $enPassantY }
     } else {
         $script:EnPassantTarget = $null
     }
@@ -839,7 +841,9 @@ function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
 
     # Обновление цели для взятия на проходе
     if ($wasPawn -and [Math]::Abs($y2 - $y1) -eq 2) {
-        $script:EnPassantTarget = @{ X = $x2; Y = ($y1 + [Math]::Sign($y2 - $y1)) }
+        # Запоминаем клетку, через которую пешка "перепрыгнула" (потенциальная цель для взятия на проходе)
+        $enPassantY = $y1 + [Math]::Sign($y2 - $y1)
+        $script:EnPassantTarget = @{ X = $x2; Y = $enPassantY }
     } else {
         $script:EnPassantTarget = $null
     }

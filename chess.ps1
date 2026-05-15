@@ -905,7 +905,7 @@ function Load-ReplayMoves($path) {
         Write-Host "Replay-файл не содержит ходов: $path" -ForegroundColor Yellow
         return $null
     }
-    return ,$moves
+    return @($moves)
 }
 
 function Start-ReplayMode {
@@ -1293,10 +1293,11 @@ while ($true) {
         $moveData = Receive-Move
         if ($moveData) {
             $parsedMove = Parse-ReplayMoveLine $moveData
-            if ($parsedMove.Error -or $parsedMove.Skip) {
+            if ($parsedMove.Error) {
                 Write-Host "Получены некорректные данные по сети: $moveData" -ForegroundColor Red
                 pause; Close-Network; break
             }
+            if ($parsedMove.Skip) { continue }
             $m = $parsedMove.Move
             if (!(Apply-RemoteMove $m.X1 $m.Y1 $m.X2 $m.Y2 $m.Promo)) {
                 pause; Close-Network; break

@@ -53,6 +53,12 @@ $script:LocalColor = $null      # Цвет фигур локального иг�
 $script:RemoteColor = $null     # Цвет фигур удалённого игрока
 $script:LastPromotion = $null   # Тип фигуры для последнего превращения пешки
 
+# --- Переменные записи/повтора партии ---
+$script:RecordMoves = $false    # Записывать ли ходы в replay-файл
+$script:ReplayFilePath = $null  # Путь к текущему replay-файлу
+$script:ReplayMode = $false     # Активен ли режим просмотра повтора
+$script:ReplayStatus = ''       # Строка статуса для режима повтора
+
 # --- Взятие на проходе (en passant) ---
 $script:EnPassantTarget = $null # Клетка, на которую можно взять на проходе (@{X=...; Y=...})
 
@@ -694,6 +700,7 @@ function Do-Move($x1, $y1, $x2, $y2, $isAI = $false) {
     } else { 
         $script:Status = "Turn: $script:Turn" 
     }
+    Add-RecordedMove $x1 $y1 $x2 $y2 $script:LastPromotion
     return $true
 }
 
@@ -749,6 +756,9 @@ function Draw-Board {
     if ($script:NetworkMode) {
         Write-Host "LAN mode: You are $($script:LocalColor)" -ForegroundColor Cyan
     }
+    if ($script:ReplayMode -and $script:ReplayStatus) {
+        Write-Host $script:ReplayStatus -ForegroundColor Cyan
+    }
     Write-Host "Arrows: Move | Enter: Select/Move | Esc: Exit"
 }
 
@@ -802,11 +812,211 @@ function Setup-LAN {
     $script:Turn = 'White'
 }
 
+function Format-MoveLine($x1,$y1,$x2,$y2,$promo=$null) {
+    $msg = "$x1,$y1,$x2,$y2"
+    if ($promo) { $msg += ",$promo" }
+    return $msg
+}
+
+function Start-MoveRecording {
+    $replayDir = Join-Path (Get-Location) 'replays'
+    if (!(Test-Path $replayDir)) {
+        New-Item -Path $replayDir -ItemType Directory | Out-Null
+    }
+    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $script:ReplayFilePath = Join-Path $replayDir "game-$timestamp.txt"
+    $header = @(
+        "# chess-in-PowerShell replay",
+        "# format: x1,y1,x2,y2[,promotion]",
+        "# created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+        ""
+    )
+    Set-Content -Path $script:ReplayFilePath -Value $header -Encoding UTF8
+    $script:RecordMoves = $true
+}
+
+function Add-RecordedMove($x1,$y1,$x2,$y2,$promo=$null) {
+    if (!$script:RecordMoves -or !$script:ReplayFilePath) { return }
+    $line = Format-MoveLine $x1 $y1 $x2 $y2 $promo
+    Add-Content -Path $script:ReplayFilePath -Value $line -Encoding UTF8
+}
+
+function Parse-ReplayMoveLine($line, $lineNumber = 0) {
+    $trimmed = "$line".Trim()
+    if (!$trimmed -or $trimmed.StartsWith('#')) { return @{ Skip = $true } }
+
+    $parts = $trimmed -split ','
+    if ($parts.Count -ne 4 -and $parts.Count -ne 5) {
+        return @{ Error = "Ожидался формат x1,y1,x2,y2[,promotion], получено: '$trimmed'" }
+    }
+
+    $x1 = 0; $y1 = 0; $x2 = 0; $y2 = 0
+    if (
+        ![int]::TryParse($parts[0], [ref]$x1) -or
+        ![int]::TryParse($parts[1], [ref]$y1) -or
+        ![int]::TryParse($parts[2], [ref]$x2) -or
+        ![int]::TryParse($parts[3], [ref]$y2)
+    ) {
+        return @{ Error = "Координаты должны быть целыми числами 0..7: '$trimmed'" }
+    }
+
+    foreach ($coord in @($x1,$y1,$x2,$y2)) {
+        if ($coord -lt 0 -or $coord -gt 7) {
+            return @{ Error = "Координаты вне диапазона 0..7: '$trimmed'" }
+        }
+    }
+
+    $promo = $null
+    if ($parts.Count -eq 5 -and ![string]::IsNullOrWhiteSpace($parts[4])) {
+        $promo = Normalize-PromotionType $parts[4]
+        if (!$promo) {
+            return @{ Error = "Некорректный тип превращения '$($parts[4])' в строке '$trimmed'" }
+        }
+    }
+
+    return @{
+        Skip = $false
+        Move = @{
+            X1 = $x1; Y1 = $y1; X2 = $x2; Y2 = $y2
+            Promo = $promo
+            Raw = $trimmed
+            LineNumber = $lineNumber
+        }
+    }
+}
+
+function Load-ReplayMoves($path) {
+    if (!(Test-Path $path)) {
+        Write-Host "Файл повтора не найден: $path" -ForegroundColor Red
+        return $null
+    }
+    $lines = Get-Content -Path $path -Encoding UTF8
+    $moves = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $lineNumber = $i + 1
+        $parsed = Parse-ReplayMoveLine $lines[$i] $lineNumber
+        if ($parsed.Error) {
+            Write-Host "Ошибка в replay-файле (строка $lineNumber): $($parsed.Error)" -ForegroundColor Red
+            return $null
+        }
+        if (!$parsed.Skip) { $moves += $parsed.Move }
+    }
+    if ($moves.Count -eq 0) {
+        Write-Host "Replay-файл не содержит ходов: $path" -ForegroundColor Yellow
+        return $null
+    }
+    return ,$moves
+}
+
+function Start-ReplayMode {
+    $script:ReplayMode = $true
+    $script:RecordMoves = $false
+    $script:ReplayFilePath = $null
+
+    $replayDir = Join-Path (Get-Location) 'replays'
+    $existingFiles = @()
+    if (Test-Path $replayDir) {
+        $existingFiles = @(Get-ChildItem -Path $replayDir -Filter '*.txt' | Sort-Object LastWriteTime -Descending)
+    }
+
+    Clear-Host
+    Write-Host "Режим повтора" -ForegroundColor Cyan
+    if ($existingFiles.Count -gt 0) {
+        Write-Host "Последние replay-файлы:" -ForegroundColor Yellow
+        $existingFiles | Select-Object -First 5 | ForEach-Object { Write-Host " - $($_.Name)" }
+    } else {
+        Write-Host "Папка replays пуста. Укажите путь к файлу вручную." -ForegroundColor Yellow
+    }
+
+    $inputPath = Read-Host "Введите путь к replay-файлу (Enter = выбрать из ./replays)"
+    if ([string]::IsNullOrWhiteSpace($inputPath)) {
+        $fileName = Read-Host "Введите имя replay-файла"
+        if ([string]::IsNullOrWhiteSpace($fileName)) {
+            Write-Host "Replay-файл не выбран." -ForegroundColor Red
+            $script:ReplayMode = $false
+            return
+        }
+        $inputPath = Join-Path $replayDir $fileName
+    } elseif (!(Split-Path -Path $inputPath -IsAbsolute)) {
+        $inputPath = Join-Path (Get-Location) $inputPath
+    }
+
+    $moves = Load-ReplayMoves $inputPath
+    if (!$moves) {
+        $script:ReplayMode = $false
+        return
+    }
+
+    Init-Grid
+    $script:Status = "Replay mode"
+    Save-Position
+    $script:HasSelection = $false
+    $script:ValidMoves = @()
+
+    $index = 0
+    $autoPlay = $false
+    $autoDelayMs = 700
+
+    while ($true) {
+        $state = if ($autoPlay) { 'ON' } else { 'OFF' }
+        $script:ReplayStatus = "Replay: $index/$($moves.Count) | Enter/→: Next | A: Autoplay=$state | ←/B: Back | Esc: Exit"
+        Draw-Board
+
+        if ($autoPlay -and $index -lt $moves.Count) {
+            Start-Sleep -Milliseconds $autoDelayMs
+            $m = $moves[$index]
+            if (!(Apply-RemoteMove $m.X1 $m.Y1 $m.X2 $m.Y2 $m.Promo)) {
+                Write-Host "Ошибка replay: нелегальный ход #$($index + 1), строка $($m.LineNumber): $($m.Raw)" -ForegroundColor Red
+                $autoPlay = $false
+            } else {
+                $index++
+            }
+            continue
+        }
+
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        if ($key.VirtualKeyCode -eq 27) { break } # Esc
+
+        if ($key.VirtualKeyCode -eq 65) { # A
+            $autoPlay = -not $autoPlay
+            continue
+        }
+
+        if (($key.VirtualKeyCode -eq 39 -or $key.VirtualKeyCode -eq 13) -and $index -lt $moves.Count) { # Right / Enter
+            $m = $moves[$index]
+            if (!(Apply-RemoteMove $m.X1 $m.Y1 $m.X2 $m.Y2 $m.Promo)) {
+                Write-Host "Ошибка replay: нелегальный ход #$($index + 1), строка $($m.LineNumber): $($m.Raw)" -ForegroundColor Red
+            } else {
+                $index++
+            }
+            continue
+        }
+
+        if (($key.VirtualKeyCode -eq 37 -or $key.VirtualKeyCode -eq 66) -and $index -gt 0) { # Left / B
+            $index--
+            Init-Grid
+            $script:Status = "Replay mode"
+            Save-Position
+            $script:HasSelection = $false
+            $script:ValidMoves = @()
+            for ($i = 0; $i -lt $index; $i++) {
+                $m = $moves[$i]
+                if (!(Apply-RemoteMove $m.X1 $m.Y1 $m.X2 $m.Y2 $m.Promo)) {
+                    Write-Host "Ошибка replay при возврате на ход #$($i + 1), строка $($m.LineNumber): $($m.Raw)" -ForegroundColor Red
+                    break
+                }
+            }
+        }
+    }
+
+    $script:ReplayMode = $false
+    $script:ReplayStatus = ''
+}
+
 # Функция: Send-Move
 # Назначение: Отправляет координаты хода и тип превращения по сети
 function Send-Move($x1,$y1,$x2,$y2,$promo=$null) {
-    $msg = "$x1,$y1,$x2,$y2"
-    if ($promo) { $msg += ",$promo" }
+    $msg = Format-MoveLine $x1 $y1 $x2 $y2 $promo
     $data = [System.Text.Encoding]::UTF8.GetBytes($msg)
     $script:NetworkStream.Write($data, 0, $data.Length)
     $script:NetworkStream.Flush()
@@ -839,7 +1049,7 @@ function Receive-Move {
 function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
     if (!(Test-ValidMove $x1 $y1 $x2 $y2 $false)) {
         Write-Host "Получен нелегальный ход от противника!" -ForegroundColor Red
-        return
+        return $false
     }
     $piece = $script:Grid[$y1][$x1]
     $target = $script:Grid[$y2][$x2]
@@ -903,6 +1113,11 @@ function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
         }
     }
     
+    $recordPromo = $promo
+    if ($wasPawn -and ($y2 -eq 0 -or $y2 -eq 7) -and !$recordPromo) {
+        $recordPromo = $script:Grid[$y2][$x2].Type
+    }
+
     # Завершение хода
     $script:Turn = if ($script:Turn -eq 'White') { 'Black' } else { 'White' }
     $script:TotalMoves++; Save-Position
@@ -916,6 +1131,8 @@ function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
     } elseif ($check) { $script:Status = "CHECK!" }
     elseif (!$can) { $script:Status = "STALEMATE! DRAW!" }
     else { $script:Status = "Turn: $script:Turn" }
+    Add-RecordedMove $x1 $y1 $x2 $y2 $recordPromo
+    return $true
 }
 
 # Функция: Close-Network
@@ -992,12 +1209,13 @@ Save-Position
 
 # Меню выбора режима
 $GameMode = ''
-while ($GameMode -notin 'TwoPlayer','VsAI','LAN') {
+while ($GameMode -notin 'TwoPlayer','VsAI','LAN','Replay') {
     Clear-Host
     Write-Host "Выберите режим:" -ForegroundColor Cyan
     Write-Host "1. Два игрока (локально)"
     Write-Host "2. Против компьютера"
     Write-Host "3. LAN игра"
+    Write-Host "4. Повтор (replay)"
     Write-Host "> " -NoNewline
     
     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -1005,6 +1223,7 @@ while ($GameMode -notin 'TwoPlayer','VsAI','LAN') {
         49 { $GameMode = 'TwoPlayer' }
         50 { $GameMode = 'VsAI' }
         51 { $GameMode = 'LAN' }
+        52 { $GameMode = 'Replay' }
         27 { exit }
     }
 }
@@ -1027,7 +1246,17 @@ elseif ($GameMode -eq 'LAN') {
     Clear-Host
     Setup-LAN
 }
+elseif ($GameMode -eq 'Replay') {
+    Start-ReplayMode
+    exit
+}
 Clear-Host
+
+Start-MoveRecording
+if ($script:ReplayFilePath) {
+    Write-Host "Recording moves to: $script:ReplayFilePath" -ForegroundColor DarkGray
+    Start-Sleep -Milliseconds 900
+}
 
 
 # ============================================================================
@@ -1063,11 +1292,15 @@ while ($true) {
     if ($script:NetworkMode -and $script:Turn -eq $script:RemoteColor) {
         $moveData = Receive-Move
         if ($moveData) {
-            $parts = $moveData -split ','
-            $x1 = [int]$parts[0]; $y1 = [int]$parts[1]
-            $x2 = [int]$parts[2]; $y2 = [int]$parts[3]
-            $promo = if ($parts.Count -gt 4) { $parts[4] } else { $null }
-            Apply-RemoteMove $x1 $y1 $x2 $y2 $promo
+            $parsedMove = Parse-ReplayMoveLine $moveData
+            if ($parsedMove.Error -or $parsedMove.Skip) {
+                Write-Host "Получены некорректные данные по сети: $moveData" -ForegroundColor Red
+                pause; Close-Network; break
+            }
+            $m = $parsedMove.Move
+            if (!(Apply-RemoteMove $m.X1 $m.Y1 $m.X2 $m.Y2 $m.Promo)) {
+                pause; Close-Network; break
+            }
             $script:HasSelection = $false; $script:ValidMoves = @()
             continue
         } else {

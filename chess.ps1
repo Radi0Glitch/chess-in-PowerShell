@@ -1294,7 +1294,7 @@ while ($true) {
         if ($moveData) {
             $parsedMove = Parse-ReplayMoveLine $moveData
             if ($parsedMove.Error) {
-                Write-Host "Получены некорректные данные по сети: $moveData" -ForegroundColor Red
+                Write-Host "Получены некорректные данные по сети: $($parsedMove.Error)" -ForegroundColor Red
                 pause; Close-Network; break
             }
             if ($parsedMove.Skip) { continue }

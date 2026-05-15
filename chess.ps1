@@ -122,8 +122,9 @@ function Get-Symbol($piece) {
     $symbol = $s[$piece.Color][$piece.Type]
     if (!$symbol) {
         $symbol = switch ("$($piece.Type)".Trim().ToUpper()) {
-            'K' { 'H' }
+            'K' { 'K' }
             'H' { 'H' }
+            'N' { 'H' }
             'Q' { 'Q' }
             'R' { 'R' }
             'B' { 'B' }
@@ -482,6 +483,7 @@ function Normalize-PromotionType($type) {
         'BISHOP' { 'Bishop' }
         'K' { 'Knight' }
         'H' { 'Knight' }
+        'N' { 'Knight' }
         'KNIGHT' { 'Knight' }
         default { $null }
     }

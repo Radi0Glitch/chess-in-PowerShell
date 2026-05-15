@@ -119,7 +119,27 @@ function Get-Symbol($piece) {
         'White' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='H'; Pawn='P' }
         'Black' = @{ King='K'; Queen='Q'; Rook='R'; Bishop='B'; Knight='H'; Pawn='P' }
     }
-    return $s[$piece.Color][$piece.Type]
+    $symbol = $s[$piece.Color][$piece.Type]
+    if (!$symbol) {
+        $symbol = switch ("$($piece.Type)".Trim().ToUpper()) {
+            'K' { 'H' }
+            'H' { 'H' }
+            'Q' { 'Q' }
+            'R' { 'R' }
+            'B' { 'B' }
+            'P' { 'P' }
+            'KING' { 'K' }
+            'QUEEN' { 'Q' }
+            'ROOK' { 'R' }
+            'BISHOP' { 'B' }
+            'KNIGHT' { 'H' }
+            'PAWN' { 'P' }
+            default { '?' }
+        }
+    }
+    $symbol = [string]$symbol
+    if ($symbol.Length -eq 0) { return '?' }
+    return $symbol.Substring(0, 1)
 }
 
 
@@ -451,11 +471,29 @@ function Test-HasAnyValidMoves($color) {
 # Параметры:
 #   $forcedType — если указан, превращение происходит автоматически (для ИИ)
 #   $isAI — флаг, что ход делает компьютер (всегда выбирает ферзя)
+function Normalize-PromotionType($type) {
+    if (!$type) { return $null }
+    switch ("$type".Trim().ToUpper()) {
+        'Q' { 'Queen' }
+        'QUEEN' { 'Queen' }
+        'R' { 'Rook' }
+        'ROOK' { 'Rook' }
+        'B' { 'Bishop' }
+        'BISHOP' { 'Bishop' }
+        'K' { 'Knight' }
+        'H' { 'Knight' }
+        'KNIGHT' { 'Knight' }
+        default { $null }
+    }
+}
+
 function Convert-Pawn($x, $y, $forcedType = $null, $isAI = $false) {
     $pawn = $script:Grid[$y][$x]
     $color = $pawn.Color
     if ($forcedType) {
-        $script:Grid[$y][$x] = @{ Type=$forcedType; Color=$color; X=$x; Y=$y }
+        $type = Normalize-PromotionType $forcedType
+        if (!$type) { $type = 'Queen' }
+        $script:Grid[$y][$x] = @{ Type=$type; Color=$color; X=$x; Y=$y }
         return
     }
     if ($isAI) {
@@ -477,7 +515,9 @@ function Convert-Pawn($x, $y, $forcedType = $null, $isAI = $false) {
             default { $null }
         }
         if ($choice) {
-            $script:Grid[$y][$x] = @{ Type=$choice; Color=$color; X=$x; Y=$y }
+            $type = Normalize-PromotionType $choice
+            if (!$type) { $type = 'Queen' }
+            $script:Grid[$y][$x] = @{ Type=$type; Color=$color; X=$x; Y=$y }
             break
         }
     }
@@ -852,7 +892,9 @@ function Apply-RemoteMove($x1,$y1,$x2,$y2,$promo) {
     if ($wasPawn -and ($y2 -eq 0 -or $y2 -eq 7)) {
         if ($promo) {
             $color = $script:Grid[$y2][$x2].Color
-            $script:Grid[$y2][$x2] = @{ Type=$promo; Color=$color; X=$x2; Y=$y2 }
+            $type = Normalize-PromotionType $promo
+            if (!$type) { $type = 'Queen' }
+            $script:Grid[$y2][$x2] = @{ Type=$type; Color=$color; X=$x2; Y=$y2 }
         } else {
             $color = $script:Grid[$y2][$x2].Color
             $script:Grid[$y2][$x2] = @{ Type='Queen'; Color=$color; X=$x2; Y=$y2 }

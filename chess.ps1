@@ -722,15 +722,15 @@ function Draw-Board {
             $p = $script:Grid[$y][$x]
             $s = Get-Symbol $p
             # Базовые цвета: шахматная раскраска
-            $bg = if (($x + $y) % 2) { 'DarkGray' } else { 'Gray' }
-            $fg = if ($p -and $p.Color -eq 'White') { 'White' } else { 'Black' }
+            $bg = if (($x + $y) % 2) { 'Black' } else { 'White' }
+            $fg = if ($p -and $p.Color -eq 'White') { 'Green' } else { 'Red' }
             
             # Подсветка: король под шахом
             if ($p -and $p.Type -eq 'King' -and (Test-KingInCheck $p.Color)) { $bg = 'Red'; $fg = 'White' }
             # Подсветка: допустимые ходы для выбранной фигуры
             if ($script:ValidMoves -contains "$x,$y") { $bg = 'Green' }
             # Подсветка: выбранная фигура
-            if ($script:HasSelection -and $x -eq $script:StartX -and $y -eq $script:StartY) { $bg = 'Cyan'; $fg = 'Black' }
+            if ($script:HasSelection -and $x -eq $script:StartX -and $y -eq $script:StartY) { $bg = 'Magenta'; $fg = 'Black' }
             # Подсветка: позиция курсора
             if ($x -eq $script:SelX -and $y -eq $script:SelY) { $bg = 'Blue'; $fg = 'Yellow' }
             
